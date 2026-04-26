@@ -1,0 +1,119 @@
+# Supabase setup (Phase 1)
+
+このディレクトリは **共有 ROI / 認証 / 保護コンテンツ配信** を Supabase 上に立てるためのスクリプト一式です。Phase 1 では `cor_slide_1_10` を Supabase に乗せ、ログインモーダルと ROI 共有を動かすところまでをゴールにします。
+
+> 必要なものは Supabase の **無料プラン** だけです。クレジットカード登録なしで試せます。
+
+---
+
+## 0. 事前準備
+
+1. <https://supabase.com> でアカウント作成（GitHub ログイン可）
+2. **New Project** を押し:
+   - Name: 任意（例 `marmoset-atlas-test`）
+   - Database password: 後で使うのでメモ
+   - Region: 一番近いもの（例 `Northeast Asia (Tokyo)`）
+3. プロジェクトが起動したら、左サイドバーから:
+   - **SQL Editor** … スキーマ投入と seed 実行に使う
+   - **Storage** … HE TIFF などをアップロードする
+   - **Project Settings → API** … URL と anon key を取得する
+
+---
+
+## 1. スキーマ投入
+
+1. Supabase の **SQL Editor → New query** を開く
+2. このリポジトリの [`schema.sql`](./schema.sql) の中身を全部コピペ
+3. **Run** を押す（`Success. No rows returned` が出れば OK）
+
+これで `projects` / `project_credentials` / `sections` / `rois` / `session_tokens` の 5 テーブルと、RPC 群が作成されます。RLS は全テーブルで ON、anon key からは RPC 経由でしかアクセスできない構成です。
+
+---
+
+## 2. Storage バケットへのファイルアップロード
+
+`schema.sql` を実行すると `atlases` という非公開バケットが自動作成されます。
+
+1. Supabase の **Storage → atlases** に移動
+2. 新規フォルダ `cor_slide_1_10/sections/0/` を作成
+3. 以下 3 ファイルを `datasets/cor_slide_1_10/data/` から **そのままアップロード**:
+
+   | アップロード後のパス | ローカルの元ファイル |
+   | --- | --- |
+   | `cor_slide_1_10/sections/0/he.tif`    | `datasets/cor_slide_1_10/data/HE_Mam_Cor_Slide 1_10.TIF` |
+   | `cor_slide_1_10/sections/0/msi.xlsx`  | `datasets/cor_slide_1_10/data/260421_msi_full_data_with_rois_1_10.xlsx` |
+   | `cor_slide_1_10/sections/0/overlay.json` | `datasets/cor_slide_1_10/data/260421_overlay_reproducibility_1_10.json` |
+
+> ファイル名は何でも構いませんが、変えた場合は次の seed の `storage_paths` も合わせて変更してください。
+
+---
+
+## 3. seed の実行（プロジェクト + 切片 + 既存 ROI を投入）
+
+1. [`seed_cor_slide_1_10.sql`](./seed_cor_slide_1_10.sql) を開き、**2 行のパスワードを必ず差し替え**:
+   ```sql
+   select set_project_password('cor_slide_1_10', 'viewer', 'change-me-viewer');
+   select set_project_password('cor_slide_1_10', 'admin',  'change-me-admin');
+   ```
+   - viewer 用: 共同研究者と URL と一緒に共有する合鍵
+   - admin 用: あなただけが知る鍵（クリアボタンを使うとき入れる）
+2. Supabase の **SQL Editor → New query** に貼り付けて **Run**
+3. 末尾のサニティチェックを実行して、`projects=1, sections=1, rois=5` が返ることを確認:
+   ```sql
+   select count(*) from projects where slug = 'cor_slide_1_10';
+   select count(*) from sections s join projects p on p.id=s.project_id
+                   where p.slug='cor_slide_1_10';
+   select count(*) from rois r join projects p on p.id=r.project_id
+                   where p.slug='cor_slide_1_10';
+   ```
+
+---
+
+## 4. URL と anon key を控える
+
+Supabase の **Project Settings → API** から:
+
+- `Project URL` … `https://<project-ref>.supabase.co`
+- `Project API keys → anon (public)` … `eyJ...` で始まる長い文字列
+
+この 2 つを Claude にコピペで貼ってください。フロントエンド (`viewer/index.html`) を Supabase に向ける作業に入ります。
+
+> **Service role key は絶対に渡さないでください。** ブラウザに置いてはいけない最強権限のキーです。
+
+---
+
+## 5. その後のフロー（Claude 側で実装）
+
+- `viewer/supabase-client.js` を追加
+- `viewer/index.html` 冒頭にログインモーダル
+- `populateRoiList` / `finalizeDrawing` / `deleteUserRoi` を Supabase RPC 経由に
+- admin 入りの時だけ「全 ROI クリア」ボタンを表示
+
+ここまで終わったら、ブラウザで `viewer/index.html?project=cor_slide_1_10` を開いて
+
+1. viewer パスワード → 名前 "Alice" → 既存 5 ROI が見える
+2. 新しい ROI を追加してリロード → 残っている、`by Alice` の表示
+3. 別ブラウザで "Bob" として入る → Alice の ROI が見える、消せる
+4. admin パスワードで入る → クリアボタンが出る、押すと全消去
+
+を確認します。
+
+---
+
+## トラブルシュート
+
+| 症状 | 原因 / 対処 |
+| --- | --- |
+| `permission denied for function …` | RPC 実行権限。`schema.sql` の `grant execute …` が走っていない可能性。再実行する |
+| `invalid credentials` | パスワード違い、または `set_project_password` のスペル違い |
+| HE TIFF が読めない | Storage 側でパスが違う／signed URL の有効期限切れ。`get_signed_url` の `p_expires` を伸ばす |
+| ROI が他ブラウザに反映されない | リロード必須仕様（Realtime 同期は Phase 2 以降の検討事項） |
+| 全 ROI を初期状態に戻したい | admin で入って「全 ROI クリア」→ `seed_cor_slide_1_10.sql` の最後の `import_rois_jsonb` ブロックだけ再実行 |
+
+---
+
+## 後段（Phase 2 以降）に向けたメモ
+
+- 切片を増やすときは `sections` に行を追加するだけ（`ordinal` で並び順を制御）
+- 新規プロジェクトを作るときは `projects` に行を追加 → `set_project_password` を 2 回 → `sections` を入れる
+- Realtime 同期を有効にしたい場合は Supabase の **Database → Replication** で `rois` テーブルを有効化（フロント側のリスナ実装は別途）
