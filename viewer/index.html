@@ -2091,7 +2091,7 @@ function loadAllImages() {
         if (slugLabel) slugLabel.textContent = SupabaseClient.PROJECT_SLUG;
         nameInp.value = SupabaseClient.getDisplayName();
         errEl.textContent = '';
-        modal.classList.remove('hidden');
+        modal.style.display = 'flex';
         setTimeout(() => passInp.focus(), 0);
         const onSubmit = async (e) => {
           e.preventDefault();
@@ -2104,7 +2104,7 @@ function loadAllImages() {
           try {
             await SupabaseClient.unlock(password);
             SupabaseClient.setDisplayName(name);
-            modal.classList.add('hidden');
+            modal.style.display = 'none';
             form.removeEventListener('submit', onSubmit);
             resolve();
           } catch (err) {
@@ -2210,7 +2210,7 @@ function loadAllImages() {
 
     <span id="user-badge" class="hidden" style="position:fixed;top:4px;right:8px;font-size:11px;background:#0f172a;color:#fff;padding:2px 8px;border-radius:9999px;z-index:40;"></span>
 
-    <div id="login-modal" class="hidden" style="position:fixed;inset:0;background:rgba(15,23,42,0.55);z-index:60;display:flex;align-items:center;justify-content:center;">
+    <div id="login-modal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,0.55);z-index:60;align-items:center;justify-content:center;">
       <form id="login-form" class="bg-white rounded-lg shadow-xl p-5 w-80 space-y-3" autocomplete="off">
         <h2 class="text-base font-semibold text-gray-900">プロジェクトに入る</h2>
         <p class="text-xs text-gray-500">project: <span id="login-project-slug" class="font-mono text-gray-700"></span></p>
