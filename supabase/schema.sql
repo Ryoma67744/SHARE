@@ -101,7 +101,7 @@ create or replace function _resolve_token(p_token text)
 returns table (project_id uuid, role text)
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 begin
   delete from session_tokens where expires_at < now();
@@ -127,7 +127,7 @@ create or replace function set_project_password(
 ) returns void
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_project_id uuid;
@@ -152,7 +152,7 @@ create or replace function import_rois_jsonb(p_slug text, p_rois jsonb)
 returns int
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_project_id uuid;
@@ -191,7 +191,7 @@ create or replace function unlock_project(p_slug text, p_password text)
 returns table (token text, role text, expires_at timestamptz)
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_project_id uuid;
@@ -227,7 +227,7 @@ create or replace function get_project_doc(p_token text)
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   r record;
@@ -263,7 +263,7 @@ create or replace function list_rois(p_token text, p_section_id uuid)
 returns setof rois
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   r record;
@@ -287,7 +287,7 @@ create or replace function create_roi(
 ) returns rois
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   r record;
@@ -315,7 +315,7 @@ create or replace function update_roi(
 ) returns rois
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   r record;
@@ -343,7 +343,7 @@ create or replace function delete_roi(p_token text, p_id uuid)
 returns void
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   r record;
@@ -358,7 +358,7 @@ create or replace function clear_all_rois(p_token text)
 returns int
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   r record;
@@ -380,7 +380,7 @@ create or replace function get_signed_url(p_token text, p_path text, p_expires i
 returns text
 language plpgsql
 security definer
-set search_path = public, storage
+set search_path = public, extensions, storage
 as $$
 declare
   r record;
