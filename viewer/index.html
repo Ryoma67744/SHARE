@@ -11,6 +11,7 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/utif@3.1.0/UTIF.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script src="supabase-client.js"></script>
     <style>
         html, body { margin: 0; padding: 0; overflow: hidden; height: 100vh; }
         body { font-family: 'Inter', sans-serif; background-color: #f4f4f5; }
@@ -135,6 +136,7 @@
                     <div class="flex items-center justify-between mb-1 border-b pb-1 shrink-0 gap-1">
                         <h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wide">ROI List</h2>
                         <div class="flex items-center gap-2">
+                            <button id="roi-clear-all" class="hidden text-xs px-2 py-0.5 rounded border border-red-300 bg-red-50 hover:bg-red-100 text-red-700" title="全 ROI を削除（admin 専用）">全クリア</button>
                             <button id="roi-draw-toggle" class="text-xs px-2 py-0.5 rounded border border-gray-300 bg-white hover:bg-gray-50 text-gray-700" title="Draw new ROI polygon">+ 新規</button>
                             <label class="flex items-center cursor-pointer select-none">
                                 <span class="text-xs text-gray-500 mr-1">Show</span>
@@ -913,7 +915,6 @@ function loadAllImages() {
             Object.keys(roiItems).forEach(key => {
                 const name = roiNames[key] || key;
                 const rgba = palette[key]  || [128,128,128,255];
-                const isUser = typeof key === 'string' && key.startsWith(USER_ROI_PREFIX);
                 if (showFlags[key] === undefined) showFlags[key] = true;
 
                 const el = document.createElement('div');
@@ -923,7 +924,6 @@ function loadAllImages() {
                 const label = document.createElement('div');
                 label.className = 'flex items-center min-w-0 flex-1';
 
-                // 表示 ON/OFF チェックボックス(全 ROI 共通)
                 const showChk = document.createElement('input');
                 showChk.type = 'checkbox';
                 showChk.className = 'mr-1 accent-blue-600 cursor-pointer flex-none';
@@ -946,52 +946,20 @@ function loadAllImages() {
                 const nameSpan = document.createElement('span');
                 nameSpan.className = 'truncate';
                 nameSpan.textContent = name;
-                let pencil = null;
-                if (isUser) {
-                    // user ROI だけ名前クリックで改名できる
-                    nameSpan.classList.add('cursor-pointer', 'hover:underline');
-                    nameSpan.title = 'クリックで名前を変更';
-                    nameSpan.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        const current = atlasData.roi.roi_names[key] || key;
-                        const next = (prompt('ROI 名を入力してください', current) || '').trim();
-                        if (!next || next === current) return;
-                        atlasData.roi.roi_names[key] = next;
-                        populateRoiList();
-                        const prev = document.querySelector(`.roi-item[data-roi-key="${key}"]`);
-                        if (prev) {
-                            document.querySelectorAll('.roi-item').forEach(i => i.classList.remove('active'));
-                            prev.classList.add('active');
-                        }
-                        drawAllRois(key);
-                        displayGraphForRoi(key);
-                    });
-                    pencil = document.createElement('span');
-                    pencil.textContent = ' ✎';
-                    pencil.className = 'ml-1 text-slate-400 hover:text-slate-700 cursor-pointer flex-none';
-                    pencil.title = 'クリックで名前を変更';
-                    pencil.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        nameSpan.click();
-                    });
-                }
                 label.appendChild(nameSpan);
-                if (pencil) label.appendChild(pencil);
 
                 el.appendChild(label);
 
-                if (isUser) {
-                    const delBtn = document.createElement('button');
-                    delBtn.type = 'button';
-                    delBtn.className = 'ml-2 text-xs text-gray-400 hover:text-red-600';
-                    delBtn.title = 'Delete user ROI';
-                    delBtn.textContent = '✕';
-                    delBtn.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        deleteUserRoi(key);
-                    });
-                    el.appendChild(delBtn);
-                }
+                const delBtn = document.createElement('button');
+                delBtn.type = 'button';
+                delBtn.className = 'ml-2 text-xs text-gray-400 hover:text-red-600';
+                delBtn.title = 'Delete ROI';
+                delBtn.textContent = '✕';
+                delBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    deleteRoiByKey(key);
+                });
+                el.appendChild(delBtn);
 
                 el.addEventListener('click', () => {
                     displayGraphForRoi(key);
@@ -1597,25 +1565,26 @@ function loadAllImages() {
             return maxN + 1;
         }
 
-        function finalizeDrawing() {
+        async function finalizeDrawing() {
             const verts = drawingVertices.slice();
             if (verts.length < 3) { toggleDrawingMode(false); return; }
-            const name = (prompt('新しい ROI の名前を入力してください', `User ROI ${nextUserRoiNumber()}`) || '').trim();
-            if (!name) { toggleDrawingMode(false); return; }
-            const newKey = `${USER_ROI_PREFIX}${Date.now()}`;
-            const rgba = pickUnusedPaletteColor();
-            atlasData.roi = atlasData.roi || {};
-            atlasData.roi.roi_items = atlasData.roi.roi_items || {};
-            atlasData.roi.roi_names = atlasData.roi.roi_names || {};
-            atlasData.roi.palette   = atlasData.roi.palette   || {};
-            atlasData.roi.roi_show_flags = atlasData.roi.roi_show_flags || {};
-            atlasData.roi.roi_items[newKey] = [{ poly_msi: verts }];
-            atlasData.roi.roi_names[newKey] = name;
-            atlasData.roi.palette[newKey]   = rgba;
-            atlasData.roi.roi_show_flags[newKey] = true;
+            if (!atlasData.sectionId) { toggleDrawingMode(false); alert('section が読み込まれていません'); return; }
+            const colorKey = pickUnusedColorKey();
+            if (!colorKey) { toggleDrawingMode(false); alert('利用可能なパレット色がありません。admin に anatomy_palette の追加を依頼してください。'); return; }
+            const author = (window.SupabaseClient && SupabaseClient.getDisplayName()) || 'anonymous';
+            try {
+                const row = await SupabaseClient.createRoi(atlasData.sectionId, colorKey, verts, author);
+                const r = Array.isArray(row) ? row[0] : row;
+                insertRoiLocal(r);
+            } catch (e) {
+                console.error(e);
+                alert('ROI 保存に失敗しました: ' + (e.message || e));
+                toggleDrawingMode(false);
+                return;
+            }
             toggleDrawingMode(false);
             populateRoiList();
-            // 新規作成した ROI を active 扱いにしてリストのハイライトも合わせる
+            const newKey = Object.keys(atlasData.roi.roi_items).slice(-1)[0];
             const newItem = document.querySelector(`.roi-item[data-roi-key="${newKey}"]`);
             if (newItem) {
                 document.querySelectorAll('.roi-item').forEach(i => i.classList.remove('active'));
@@ -1625,18 +1594,27 @@ function loadAllImages() {
             displayGraphForRoi(newKey);
         }
 
-        function deleteUserRoi(key) {
-            if (!key || !key.startsWith(USER_ROI_PREFIX)) return;
+        async function deleteRoiByKey(key) {
+            if (!key) return;
             if (!confirm('この ROI を削除しますか?')) return;
             const wasActive = document.querySelector(`.roi-item.active[data-roi-key="${key}"]`) !== null;
+            try {
+                await SupabaseClient.deleteRoi(key);
+            } catch (e) {
+                console.error(e);
+                alert('削除に失敗しました: ' + (e.message || e));
+                return;
+            }
             if (atlasData.roi) {
                 delete atlasData.roi.roi_items[key];
                 delete atlasData.roi.roi_names[key];
                 delete atlasData.roi.palette[key];
                 if (atlasData.roi.roi_show_flags) delete atlasData.roi.roi_show_flags[key];
+                if (atlasData.roi.color_key_for)  delete atlasData.roi.color_key_for[key];
+                if (atlasData.roi.created_by)     delete atlasData.roi.created_by[key];
+                if (atlasData.roi.version)        delete atlasData.roi.version[key];
             }
             populateRoiList();
-            // 削除した ROI が active なら残った先頭 ROI に切替、そうでなければ現在の active を維持
             const remaining = Object.keys((atlasData.roi && atlasData.roi.roi_items) || {});
             let nextKey = null;
             if (wasActive && remaining.length > 0) {
@@ -1648,6 +1626,53 @@ function loadAllImages() {
             }
             drawAllRois(nextKey);
             displayGraphForRoi(nextKey);
+        }
+
+        // Anatomy palette から、まだ section 内で使われていない色キーを 1 つ返す。
+        // 名前付き(cerebellum 等)を優先し、それを使い切ったら名前なし枠を消費する。
+        function pickUnusedColorKey() {
+            const ap = atlasData.anatomyPalette || {};
+            const used = new Set(Object.values((atlasData.roi && atlasData.roi.color_key_for) || {}));
+            const entries = Object.entries(ap).map(([k, v]) => ({
+                key: k, named: !!((v && v.name || '').trim())
+            }));
+            entries.sort((a, b) => (b.named === a.named) ? 0 : (a.named ? -1 : 1));
+            for (const e of entries) if (!used.has(e.key)) return e.key;
+            return null;
+        }
+
+        // DB から取得した行 (id, color_key, poly_msi, created_by, version) を
+        // 既存レンダリング層が読む atlasData.roi.* に展開する。
+        function insertRoiLocal(row) {
+            if (!row || !row.id) return;
+            atlasData.roi = atlasData.roi || {};
+            atlasData.roi.roi_items     = atlasData.roi.roi_items     || {};
+            atlasData.roi.roi_names     = atlasData.roi.roi_names     || {};
+            atlasData.roi.palette       = atlasData.roi.palette       || {};
+            atlasData.roi.roi_show_flags= atlasData.roi.roi_show_flags|| {};
+            atlasData.roi.color_key_for = atlasData.roi.color_key_for || {};
+            atlasData.roi.created_by    = atlasData.roi.created_by    || {};
+            atlasData.roi.version       = atlasData.roi.version       || {};
+            const ap   = atlasData.anatomyPalette || {};
+            const ent  = ap[row.color_key] || {};
+            const rgba = Array.isArray(ent.rgba) ? ent.rgba.slice() : [128,128,128,255];
+            const baseName = ((ent.name || '').trim()) || row.color_key;
+            const author = (row.created_by || '').trim();
+            const label = author ? `${baseName} (by ${author})` : baseName;
+            atlasData.roi.roi_items[row.id]      = [{ poly_msi: row.poly_msi }];
+            atlasData.roi.roi_names[row.id]      = label;
+            atlasData.roi.palette[row.id]        = rgba;
+            atlasData.roi.roi_show_flags[row.id] = true;
+            atlasData.roi.color_key_for[row.id]  = row.color_key;
+            atlasData.roi.created_by[row.id]     = author;
+            atlasData.roi.version[row.id]        = row.version;
+        }
+
+        async function refreshRoisFromServer() {
+            if (!atlasData.sectionId) return;
+            const rows = await SupabaseClient.listRois(atlasData.sectionId);
+            atlasData.roi = { roi_items: {}, roi_names: {}, palette: {}, roi_show_flags: {}, color_key_for: {}, created_by: {}, version: {} };
+            for (const r of (rows || [])) insertRoiLocal(r);
         }
 
         function setupDrawingHandlers() {
@@ -2054,66 +2079,151 @@ function loadAllImages() {
       return canvas.toDataURL("image/png");
     }
 
+    function showLoginModal() {
+      return new Promise((resolve) => {
+        const modal     = document.getElementById('login-modal');
+        const form      = document.getElementById('login-form');
+        const passInp   = document.getElementById('login-password');
+        const nameInp   = document.getElementById('login-display-name');
+        const errEl     = document.getElementById('login-error');
+        const submitBtn = document.getElementById('login-submit');
+        const slugLabel = document.getElementById('login-project-slug');
+        if (slugLabel) slugLabel.textContent = SupabaseClient.PROJECT_SLUG;
+        nameInp.value = SupabaseClient.getDisplayName();
+        errEl.textContent = '';
+        modal.classList.remove('hidden');
+        setTimeout(() => passInp.focus(), 0);
+        const onSubmit = async (e) => {
+          e.preventDefault();
+          const password = passInp.value;
+          const name = nameInp.value.trim();
+          if (!password) { errEl.textContent = 'パスワードを入力してください'; return; }
+          if (!name)     { errEl.textContent = '表示名を入力してください'; return; }
+          submitBtn.disabled = true;
+          errEl.textContent = 'ログイン中...';
+          try {
+            await SupabaseClient.unlock(password);
+            SupabaseClient.setDisplayName(name);
+            modal.classList.add('hidden');
+            form.removeEventListener('submit', onSubmit);
+            resolve();
+          } catch (err) {
+            errEl.textContent = err.code === '28P01'
+              ? 'パスワードが違います'
+              : (err.message || 'ログインに失敗しました');
+            submitBtn.disabled = false;
+          }
+        };
+        form.addEventListener('submit', onSubmit);
+      });
+    }
+
+    async function loadProjectFromSupabase() {
+      const doc = await SupabaseClient.getProjectDoc();
+      const sections = Array.isArray(doc.sections) ? doc.sections : [];
+      if (!sections.length) throw new Error('プロジェクトに section がありません');
+      const section = sections[0]; // Phase 1: 最初の section だけ使う
+      const sm = section.meta || {};
+      atlasData = {
+        meta: Object.assign({ format: "roi_bundle_v1" }, doc.meta || {}, { specimen: sm.specimen || {} }),
+        roi: { roi_items: {}, roi_names: {}, palette: {}, roi_show_flags: {}, color_key_for: {}, created_by: {}, version: {} },
+        images: {},
+        world_coords: sm.world_coords || {},
+        thumbnail_order: Array.isArray(sm.thumbnail_order) ? sm.thumbnail_order : [],
+        sectionId: section.id,
+        anatomyPalette: doc.anatomy_palette || {},
+      };
+      const storage = section.storage_paths || {};
+      const signed = {};
+      for (const [k, p] of Object.entries(storage)) {
+        if (typeof p === 'string' && p) {
+          try { signed[k] = await SupabaseClient.getSignedUrl(p); }
+          catch (e) { console.warn(`[loadProjectFromSupabase] signed URL failed for ${k}:`, e); }
+        }
+      }
+      const imagesSpec = sm.images || {};
+      for (const [key, def] of Object.entries(imagesSpec)) {
+        const src = def && def.src_key ? signed[def.src_key] : null;
+        if (src) atlasData.images[key] = src;
+      }
+      const xlsxSpec = sm.xlsx_series || {};
+      for (const [key, def] of Object.entries(xlsxSpec)) {
+        const url = def && def.src_key ? signed[def.src_key] : null;
+        if (!url) continue;
+        try {
+          const fixed = Object.assign({}, def, { src: url });
+          atlasData.images[key] = await buildPngFromXlsx(fixed);
+        } catch (e) {
+          console.warn('[loadProjectFromSupabase] xlsx -> PNG failed:', key, e);
+        }
+      }
+      await refreshRoisFromServer();
+    }
+
+    function wireAdminClearButton() {
+      const btn = document.getElementById('roi-clear-all');
+      if (!btn) return;
+      if (SupabaseClient.isAdmin()) btn.classList.remove('hidden');
+      else                          btn.classList.add('hidden');
+      btn.addEventListener('click', async () => {
+        if (!SupabaseClient.isAdmin()) return;
+        if (!confirm('このプロジェクトの全 ROI を削除します。よろしいですか？')) return;
+        btn.disabled = true;
+        try {
+          const removed = await SupabaseClient.clearAllRois();
+          await refreshRoisFromServer();
+          populateRoiList();
+          drawAllRois(null);
+          displayGraphForRoi(null);
+          alert(`${removed} 件の ROI を削除しました`);
+        } catch (e) {
+          console.error(e);
+          alert('クリアに失敗しました: ' + (e.message || e));
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    }
+
     (async () => {
       try {
-        const external = await loadAtlasJsonExternal();
-        await domReady; // DOM初期化完了を待つ
-        if (!external) {
-          await initializeViewer();
-          return;
-        }
-        const params2 = new URLSearchParams(location.search);
-        const atlasId2 = params2.get('atlas') || '';
-        const baseDir = atlasId2 ? `../datasets/${atlasId2}/` : '';
-        atlasData = {
-          meta: external.meta || { format: "roi_bundle_v1" },
-          roi: external.roi || {},
-          images: {},
-          world_coords: external.world_coords || {},
-          thumbnail_order: Array.isArray(external.thumbnail_order) ? external.thumbnail_order : []
-        };
-        for (const [k, v] of Object.entries(external.images || {})) {
-          if (typeof v === "string" && !/^data:|^https?:|^\.\.\//.test(v)) {
-            atlasData.images[k] = baseDir + encodeURI(v);
-          } else {
-            atlasData.images[k] = v;
-          }
-        }
-        const series = external.txt_series || {};
-        for (const [key, def] of Object.entries(series)) {
-          try {
-            const defFixed = Object.assign({}, def);
-            if (defFixed && typeof defFixed.src === "string" && !/^https?:|^data:|^\.\.\//.test(defFixed.src)) {
-              defFixed.src = baseDir + encodeURI(defFixed.src);
-            }
-            const pngUrl = await buildPngFromTxt(defFixed);
-            atlasData.images[key] = pngUrl;
-          } catch (e) {
-            console.warn("txt -> PNG 生成に失敗:", key, e);
-          }
-        }
-        const xlsxSeries = external.xlsx_series || {};
-        for (const [key, def] of Object.entries(xlsxSeries)) {
-          try {
-            const defFixed = Object.assign({}, def);
-            if (defFixed && typeof defFixed.src === "string" && !/^https?:|^data:|^\.\.\//.test(defFixed.src)) {
-              defFixed.src = baseDir + encodeURI(defFixed.src);
-            }
-            const pngUrl = await buildPngFromXlsx(defFixed);
-            atlasData.images[key] = pngUrl;
-          } catch (e) {
-            console.warn("xlsx -> PNG 生成に失敗:", key, e);
-          }
-        }
+        await domReady;
+        if (!SupabaseClient.isAuthenticated()) await showLoginModal();
+        await loadProjectFromSupabase();
         await initializeViewer();
+        wireAdminClearButton();
+        // 名前表示用バッジを更新
+        const badge = document.getElementById('user-badge');
+        if (badge) {
+          const role = SupabaseClient.getRole();
+          badge.textContent = `${SupabaseClient.getDisplayName() || '?'}${role === 'admin' ? ' (admin)' : ''}`;
+          badge.classList.remove('hidden');
+        }
       } catch (e) {
         console.error(e);
-        try { await initializeViewer(); } catch (_) {}
+        alert('読み込みに失敗しました: ' + (e.message || e));
       }
     })();</script>
 
     <div id="buildTag" style="position:fixed;bottom:4px;right:6px;font-size:10px;color:#94a3b8;pointer-events:none;z-index:50;"></div>
-    <script>document.getElementById('buildTag').textContent = 'v:rot-fix-2';</script>
+    <script>document.getElementById('buildTag').textContent = 'v:supabase-phase1';</script>
+
+    <span id="user-badge" class="hidden" style="position:fixed;top:4px;right:8px;font-size:11px;background:#0f172a;color:#fff;padding:2px 8px;border-radius:9999px;z-index:40;"></span>
+
+    <div id="login-modal" class="hidden" style="position:fixed;inset:0;background:rgba(15,23,42,0.55);z-index:60;display:flex;align-items:center;justify-content:center;">
+      <form id="login-form" class="bg-white rounded-lg shadow-xl p-5 w-80 space-y-3" autocomplete="off">
+        <h2 class="text-base font-semibold text-gray-900">プロジェクトに入る</h2>
+        <p class="text-xs text-gray-500">project: <span id="login-project-slug" class="font-mono text-gray-700"></span></p>
+        <label class="block text-xs text-gray-600">パスワード
+          <input id="login-password" type="password" required class="mt-1 w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">
+        </label>
+        <label class="block text-xs text-gray-600">あなたの表示名 (ROI に "by &lt;名前&gt;" として残ります)
+          <input id="login-display-name" type="text" required maxlength="32" class="mt-1 w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">
+        </label>
+        <p id="login-error" class="text-xs text-red-600 min-h-[1em]"></p>
+        <button id="login-submit" type="submit" class="w-full px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium disabled:opacity-50">入る</button>
+      </form>
+    </div>
 
 </body>
 </html>
