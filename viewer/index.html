@@ -57,8 +57,8 @@ body { font-family: 'Inter', sans-serif; background-color: #f4f4f5; }
 .section-panel .layer-chip .dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
 .section-panel .layer-chip .gear { color:#64748b; }
 .section-panel .layer-chip .gear:hover { color:#1d4ed8; }
-.section-panel .thumb-row { display:flex; gap:3px; flex-wrap:wrap; padding:4px 6px 6px 6px; }
-.section-panel .thumb-cell { display:flex; flex-direction:column; align-items:center; flex:0 0 calc(25% - 3px); min-width:0; }
+.section-panel .thumb-row { display:grid; gap:4px; grid-template-columns:repeat(auto-fill, minmax(96px, 1fr)); padding:4px 6px 6px 6px; }
+.section-panel .thumb-cell { display:flex; flex-direction:column; align-items:center; min-width:0; }
 .section-panel .thumb-rot-box { position:relative; width:100%; aspect-ratio:var(--rot-ar, 1/1); max-height:90px; overflow:hidden; background:#0b1220; border-radius:3px; cursor:pointer; }
 .section-panel .thumb-rot-box img { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; transform-origin:50% 50%; }
 .section-panel .thumb-rot-box img.msi { transform:rotate(-180deg); }
@@ -277,6 +277,33 @@ function splitCeCv(label) {
     const m = s.match(/^(.+?)_(\d+)_(\d+)$/);
     if (m) return { base: m[1], ce: Number(m[2]), cv: Number(m[3]) };
     return { base: s, ce: null, cv: null };
+}
+
+// Walk an existing project and synthesise compoundMeta for any MSI layer that
+// predates the metadata era. The synthesised record is tagged { legacy: true }
+// so the UI can offer a one-click clean-up later.
+function backfillLegacyCompoundMeta(project) {
+    if (!project || !Array.isArray(project.sections)) return;
+    for (const sec of project.sections) {
+        const series = sec.msiSeries || {};
+        for (const key of Object.keys(series)) {
+            if (!/^MSI_/i.test(key)) continue;
+            const ent = series[key];
+            if (!ent || ent.compoundMeta) continue;
+            const baseLabel = key.replace(/^MSI_/, '');
+            const split = splitCeCv(baseLabel);
+            ent.compoundMeta = {
+                name: baseLabel,
+                base: split.base,
+                precursor: null,
+                product: null,
+                ce: split.ce,
+                cv: split.cv,
+                sourceFile: ent.filename || '',
+                legacy: true,
+            };
+        }
+    }
 }
 
 function pointInPolygon(x, y, vertices) {
@@ -1277,6 +1304,26 @@ class SectionPanel {
                 });
                 acts.appendChild(dBtn);
             }
+            if (fid === '__legacy__') {
+                // Old-format layers (no compoundMeta when first loaded) — give the
+                // user a one-click escape hatch to wipe them all.
+                const cBtn = document.createElement('button');
+                cBtn.textContent = 'remove all';
+                cBtn.title = 'Delete all legacy MSI layers (no precursor m/z metadata)';
+                cBtn.style.cssText += 'background:#fee2e2;color:#b91c1c;border-color:#fca5a5;';
+                cBtn.addEventListener('click', (ev) => {
+                    ev.preventDefault(); ev.stopPropagation();
+                    const targets = group.keys.slice().filter(k => {
+                        const e = (this.section.msiSeries || {})[k];
+                        return e && e.compoundMeta && e.compoundMeta.legacy === true;
+                    });
+                    if (!targets.length) return;
+                    if (!confirm('旧フォーマットの ' + targets.length + ' レイヤーをこの切片から削除しますか?')) return;
+                    for (const k of targets) this.removeLayer(k, true);
+                    App.queueSave();
+                });
+                acts.appendChild(cBtn);
+            }
             sum.appendChild(acts);
             det.appendChild(sum);
             const row = document.createElement('div');
@@ -1382,12 +1429,9 @@ class SectionPanel {
         const ordered = heKeys.concat(ifKeys).concat(msiKeys);
         const others  = allKeys.filter(k => !ordered.includes(k));
         const finalKeys = ordered.concat(others);
-        const cellPct = `calc(${(100 / Math.max(4, finalKeys.length)).toFixed(2)}% - 3px)`;
         for (const key of finalKeys) {
             const cell = document.createElement('div');
             cell.className = 'thumb-cell';
-            cell.style.flex = '0 0 ' + cellPct;
-            cell.style.maxWidth = cellPct;
 
             const box = document.createElement('div');
             box.className = 'thumb-rot-box';
@@ -1643,9 +1687,20 @@ function setupGraphSelector() {
     document.getElementById('graph-select-1').innerHTML = buildOptions(false);
     document.getElementById('graph-select-2').innerHTML = buildOptions(true);
     document.getElementById('graph-select-3').innerHTML = buildOptions(true);
-    if (flatKeys[0]) document.getElementById('graph-select-1').value = flatKeys[0];
-    if (flatKeys[1]) document.getElementById('graph-select-2').value = flatKeys[1];
-    if (flatKeys[2]) document.getElementById('graph-select-3').value = flatKeys[2];
+    // Prefer keys that carry real metadata (precursor m/z) so the default
+    // selection is informative rather than pointing at legacy migrated layers.
+    const hasPrecursor = (k) => {
+        const m = findCompoundMeta(project, k);
+        return m && m.precursor != null;
+    };
+    const ranked = flatKeys.slice().sort((a, b) => {
+        const ap = hasPrecursor(a) ? 0 : 1;
+        const bp = hasPrecursor(b) ? 0 : 1;
+        return ap - bp;
+    });
+    if (ranked[0]) document.getElementById('graph-select-1').value = ranked[0];
+    if (ranked[1]) document.getElementById('graph-select-2').value = ranked[1];
+    if (ranked[2]) document.getElementById('graph-select-3').value = ranked[2];
 }
 
 // Group MSI option entries by (sourceFile, section) so the dropdown shows
@@ -2587,6 +2642,7 @@ const App = {
         this.project.sections = this.project.sections || [];
         this.project.rois = this.project.rois || [];
         this.project.roiHidden = this.project.roiHidden || {};
+        backfillLegacyCompoundMeta(this.project);
         localStorage.setItem('desi:lastProjectId', id);
         document.getElementById('project-name-input').value = project.displayName || '';
         document.getElementById('sections-empty').classList.toggle('hidden', this.project.sections.length > 0);
