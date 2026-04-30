@@ -42,6 +42,11 @@ body { font-family: 'Inter', sans-serif; background-color: #f4f4f5; }
 .section-panel .sec-range .range-sep { font-size:10px; color:#94a3b8; }
 .section-panel .sec-range input { width:80px; padding:2px 4px; font-size:11px; border:1px solid #cbd5e1; border-radius:3px; text-align:right; background:#fff; }
 .section-panel .sec-range input:disabled { background:#f1f5f9; color:#9ca3af; }
+.section-panel .sec-rot { display:flex; align-items:center; gap:3px; padding:2px 4px; border-left:1px solid #e5e7eb; margin-left:4px; }
+.section-panel .sec-rot .rot-label, .section-panel .sec-rot .rot-deg { font-size:10px; color:#475569; }
+.section-panel .sec-rot input { width:50px; padding:2px 4px; font-size:11px; border:1px solid #cbd5e1; border-radius:3px; text-align:right; background:#fff; }
+.section-panel .sec-rot button.rot-reset { font-size:11px; padding:1px 5px; border:1px solid #cbd5e1; border-radius:3px; background:#fff; cursor:pointer; color:#475569; }
+.section-panel .sec-rot button.rot-reset:hover { background:#eef2ff; color:#1d4ed8; }
 #method-rows .marker-swatch { width:14px; height:14px; border-radius:50%; border:1px solid #cbd5e1; cursor:pointer; padding:0; vertical-align:middle; }
 #method-rows .marker-swatch:hover { border-color:#1d4ed8; }
 #method-rows .marker-input { width:0; height:0; opacity:0; pointer-events:none; position:absolute; }
@@ -52,8 +57,8 @@ body { font-family: 'Inter', sans-serif; background-color: #f4f4f5; }
 body.splitting, body.splitting * { user-select:none !important; }
 body.splitting-h { cursor:col-resize !important; }
 body.splitting-v { cursor:row-resize !important; }
-.section-panel .viewer-host { position:relative; flex:1 1 auto; min-height:320px; background:#000; }
-.section-panel .viewer-rot { position:absolute; inset:0; transform-origin:50% 50%; transform:rotate(-90deg); }
+.section-panel .viewer-host { position:relative; flex:1 1 auto; min-height:320px; background:#000; overflow:hidden; touch-action:none; }
+.section-panel .viewer-rot { position:absolute; inset:0; transform-origin:50% 50%; transform: translate(var(--vt-tx, 0px), var(--vt-ty, 0px)) rotate(calc(var(--vt-rot, 0deg) - 90deg)) scale(var(--vt-scale, 1)); will-change:transform; }
 .section-panel canvas.disp { position:absolute; }
 .section-panel canvas.roi { position:absolute; pointer-events:none; }
 .section-panel .layer-bar { padding:4px 6px 0 6px; border-top:1px solid #f1f5f9; display:flex; flex-direction:column; gap:4px; }
@@ -72,7 +77,9 @@ body.splitting-v { cursor:row-resize !important; }
 .section-panel .layer-chip .dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
 .section-panel .layer-chip .gear { color:#64748b; }
 .section-panel .layer-chip .gear:hover { color:#1d4ed8; }
-.section-panel .thumb-row { padding:4px 6px 6px 6px; max-height:200px; overflow-y:auto; display:flex; flex-direction:column; gap:4px; }
+.section-panel .thumb-row { padding:4px 6px 6px 6px; flex:0 0 var(--thumb-h, 220px); min-height:80px; overflow-y:auto; display:flex; flex-direction:column; gap:4px; }
+.section-panel .section-splitter { background:#e5e7eb; height:6px; cursor:row-resize; flex-shrink:0; }
+.section-panel .section-splitter:hover, .section-panel .section-splitter.dragging { background:#60a5fa; }
 .section-panel .thumb-file-group { border:1px solid #e5e7eb; border-radius:4px; padding:2px 4px; }
 .section-panel .thumb-file-group > summary { cursor:pointer; font-size:11px; color:#334155; display:flex; align-items:center; gap:4px; user-select:none; outline:none; padding:1px 2px; }
 .section-panel .thumb-file-group > summary::-webkit-details-marker { display:none; }
@@ -93,7 +100,7 @@ body.splitting-v { cursor:row-resize !important; }
 .color-swatch { width:0.85rem; height:0.85rem; border-radius:0.2rem; display:inline-block; margin-right:0.4rem; vertical-align:middle; border:1px solid #cbd5e1; }
 #roi-toggle:checked ~ #roi-toggle-bg { background-color:#3b82f6; }
 #roi-toggle:checked ~ #roi-toggle-dot { transform:translateX(1rem); }
-#sections-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(360px, 1fr)); grid-auto-rows:minmax(380px, auto); gap:6px; padding:6px; overflow:auto; align-content:start; }
+#sections-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(360px, 1fr)); grid-auto-rows:minmax(380px, 1fr); gap:6px; padding:6px; overflow:auto; align-content:stretch; height:100%; }
 .empty-shell { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; height:100%; color:#475569; padding:30px; text-align:center; }
 .empty-shell h2 { font-size:18px; font-weight:600; color:#0f172a; }
 .empty-shell p { max-width:520px; font-size:13px; line-height:1.5; }
@@ -887,6 +894,7 @@ class SectionPanel {
         const root = document.createElement('div');
         root.className = 'section-panel';
         root.dataset.sectionId = this.section.id;
+        root.style.setProperty('--thumb-h', (App.thumbHeight || 220) + 'px');
         root.addEventListener('click', () => App.setActiveSection(this.section.id));
 
         const header = document.createElement('header');
@@ -928,6 +936,41 @@ class SectionPanel {
             '<input type="number" class="range-max" step="any" placeholder="max" disabled>';
         rangeBox.addEventListener('click', (e) => e.stopPropagation());
         header.appendChild(rangeBox);
+
+        // Rotation (degrees) + Reset transform — translate/scale are wired
+        // through pointer drag and wheel events on the viewer-host below.
+        const rotBox = document.createElement('div');
+        rotBox.className = 'sec-rot';
+        rotBox.innerHTML =
+            '<span class="rot-label">Rot:</span>' +
+            '<input type="number" class="rot-input" step="1" min="-180" max="180" value="0">' +
+            '<span class="rot-deg">°</span>' +
+            '<button type="button" class="rot-reset" title="Reset translate/rotate/zoom">↻</button>';
+        rotBox.addEventListener('click', (e) => e.stopPropagation());
+        header.appendChild(rotBox);
+        const rotInp = rotBox.querySelector('.rot-input');
+        const rotReset = rotBox.querySelector('.rot-reset');
+        rotInp.addEventListener('change', () => {
+            const t = this._ensureViewerTransform();
+            let v = parseFloat(rotInp.value);
+            if (!Number.isFinite(v)) v = 0;
+            v = Math.max(-180, Math.min(180, v));
+            t.rot = v;
+            rotInp.value = String(v);
+            this.applyViewerTransform();
+            App.queueSave();
+        });
+        rotReset.addEventListener('click', () => {
+            const t = this._ensureViewerTransform();
+            t.tx = 0; t.ty = 0; t.rot = 0; t.scale = 1;
+            rotInp.value = '0';
+            this.applyViewerTransform();
+            App.queueSave();
+        });
+        // (rotInp / rotBox added to this.dom below alongside the canvas refs)
+        this._pendingRotInput = rotInp;
+        this._pendingRotBox = rotBox;
+
         root.appendChild(header);
         const rangeMinInp = rangeBox.querySelector('.range-min');
         const rangeMaxInp = rangeBox.querySelector('.range-max');
@@ -966,7 +1009,9 @@ class SectionPanel {
         rot.appendChild(cdisp); rot.appendChild(croi);
         host.appendChild(rot);
         root.appendChild(host);
-        this.dom = { root, header, host, rot, cdisp, croi, acts, rangeBox };
+        this.dom = { root, header, host, rot, cdisp, croi, acts, rangeBox, rotInput: this._pendingRotInput, rotBox: this._pendingRotBox };
+        this._pendingRotInput = null;
+        this._pendingRotBox = null;
         this.displayCtx = cdisp.getContext('2d', { willReadFrequently: true });
         this.roiCtx = croi.getContext('2d');
 
@@ -975,12 +1020,21 @@ class SectionPanel {
         root.appendChild(layerBar);
         this.dom.layerBar = layerBar;
 
+        const splitter = document.createElement('div');
+        splitter.className = 'section-splitter';
+        splitter.title = 'Drag to resize the thumbnail panel';
+        root.appendChild(splitter);
+        this.dom.splitter = splitter;
+        this._wireSplitter(splitter);
+
         const thumbs = document.createElement('div');
         thumbs.className = 'thumb-row';
         root.appendChild(thumbs);
         this.dom.thumbs = thumbs;
 
         this.renderEmptyOverlay();
+        this.applyViewerTransform();
+        this._wireViewerHostInteractions();
 
         if (typeof ResizeObserver !== 'undefined') {
             let raf = 0;
@@ -1036,6 +1090,8 @@ class SectionPanel {
         }
         this.refreshRangeEditor();
         this.refreshActiveOutline();
+        this.applyViewerTransform();
+        this._wireViewerHostInteractions();
     }
 
     firstLayerKey() {
@@ -1497,10 +1553,16 @@ class SectionPanel {
             }
             sum.appendChild(acts);
             det.appendChild(sum);
-            const row = document.createElement('div');
-            row.className = 'layer-chip-row';
-            for (const k of group.keys) row.appendChild(mkChip(k));
-            det.appendChild(row);
+            // For MSI groups bucketed under a real sourceFileId, skip the chip
+            // row entirely — those layers are identified through the thumbnail
+            // panel below, and a duplicate chip strip just adds noise.
+            const isFileGroup = (fid !== '__images__' && fid !== '__legacy__');
+            if (!isFileGroup) {
+                const row = document.createElement('div');
+                row.className = 'layer-chip-row';
+                for (const k of group.keys) row.appendChild(mkChip(k));
+                det.appendChild(row);
+            }
             bar.appendChild(det);
         }
     }
@@ -1639,6 +1701,178 @@ class SectionPanel {
         App.queueSave();
     }
 
+    _ensureViewerTransform() {
+        if (!this.section.meta) this.section.meta = {};
+        if (!this.section.meta.viewerTransform) {
+            this.section.meta.viewerTransform = { tx: 0, ty: 0, rot: 0, scale: 1 };
+        } else {
+            const t = this.section.meta.viewerTransform;
+            if (!Number.isFinite(t.tx))    t.tx = 0;
+            if (!Number.isFinite(t.ty))    t.ty = 0;
+            if (!Number.isFinite(t.rot))   t.rot = 0;
+            if (!Number.isFinite(t.scale)) t.scale = 1;
+        }
+        return this.section.meta.viewerTransform;
+    }
+
+    applyViewerTransform() {
+        const t = this._ensureViewerTransform();
+        const rot = this.dom && this.dom.rot;
+        if (rot) {
+            rot.style.setProperty('--vt-tx', t.tx + 'px');
+            rot.style.setProperty('--vt-ty', t.ty + 'px');
+            rot.style.setProperty('--vt-rot', t.rot + 'deg');
+            rot.style.setProperty('--vt-scale', String(t.scale));
+        }
+        if (this.dom && this.dom.rotInput) this.dom.rotInput.value = String(Math.round(t.rot));
+    }
+
+    // Drag (no modifier) translates the section content; wheel zooms it. ROI
+    // drawing mode takes priority — when active, the croi canvas captures
+    // events first, so transform interaction is naturally suppressed.
+    _wireViewerHostInteractions() {
+        const host = this.dom && this.dom.host;
+        if (!host || host.dataset.transformWired === '1') return;
+        host.dataset.transformWired = '1';
+
+        let dragging = false;
+        let startX = 0, startY = 0, baseTx = 0, baseTy = 0;
+        host.addEventListener('pointerdown', (ev) => {
+            if (ev.button !== 0) return;
+            // ROI drawing handlers live on the croi canvas; if drawing mode
+            // is active, croi captures the click and this handler never sees
+            // it. Still bail out defensively.
+            if (App.drawing && App.drawing.mode) return;
+            const t = this._ensureViewerTransform();
+            dragging = true;
+            startX = ev.clientX; startY = ev.clientY;
+            baseTx = t.tx; baseTy = t.ty;
+            host.setPointerCapture(ev.pointerId);
+            host.style.cursor = 'grabbing';
+        });
+        host.addEventListener('pointermove', (ev) => {
+            if (!dragging) return;
+            const t = this._ensureViewerTransform();
+            t.tx = baseTx + (ev.clientX - startX);
+            t.ty = baseTy + (ev.clientY - startY);
+            this.applyViewerTransform();
+        });
+        const endDrag = (ev) => {
+            if (!dragging) return;
+            dragging = false;
+            try { host.releasePointerCapture(ev.pointerId); } catch (e) {}
+            host.style.cursor = '';
+            App.queueSave();
+        };
+        host.addEventListener('pointerup', endDrag);
+        host.addEventListener('pointercancel', endDrag);
+
+        host.addEventListener('wheel', (ev) => {
+            if (App.drawing && App.drawing.mode) return;
+            ev.preventDefault();
+            const t = this._ensureViewerTransform();
+            const factor = Math.exp(-ev.deltaY * 0.001);
+            t.scale = Math.max(0.2, Math.min(5, t.scale * factor));
+            this.applyViewerTransform();
+            App.queueSave();
+        }, { passive: false });
+    }
+
+    // Wire the thumb-row resize splitter. Drag updates a shared height value
+    // that's persisted to localStorage and broadcast to every section panel
+    // via a CSS variable, so all sections grow/shrink in lockstep.
+    _wireSplitter(splitter) {
+        let initial = 0;
+        let startY = 0;
+        const onMove = (ev) => {
+            const dy = ev.clientY - startY;
+            const root = this.dom.root;
+            const rootH = root.getBoundingClientRect().height;
+            const newH = Math.min(rootH - 160, Math.max(80, initial - dy));
+            App.setThumbHeight(Math.round(newH));
+        };
+        const onUp = (ev) => {
+            splitter.releasePointerCapture(ev.pointerId);
+            splitter.classList.remove('dragging');
+            document.body.classList.remove('splitting', 'splitting-v');
+            splitter.removeEventListener('pointermove', onMove);
+            splitter.removeEventListener('pointerup', onUp);
+            splitter.removeEventListener('pointercancel', onUp);
+        };
+        splitter.addEventListener('pointerdown', (ev) => {
+            if (ev.button !== 0) return;
+            ev.preventDefault();
+            splitter.setPointerCapture(ev.pointerId);
+            splitter.classList.add('dragging');
+            document.body.classList.add('splitting', 'splitting-v');
+            startY = ev.clientY;
+            const cur = parseInt(getComputedStyle(this.dom.thumbs).height) || 220;
+            initial = cur;
+            splitter.addEventListener('pointermove', onMove);
+            splitter.addEventListener('pointerup', onUp);
+            splitter.addEventListener('pointercancel', onUp);
+        });
+    }
+
+    // Lightweight popover anchored on a thumbnail cell. Exposes opacity
+    // (slider) and a Remove action; the chip-strip is gone for MSI file
+    // groups so this is the only way to tweak per-layer opacity.
+    openThumbPopover(key, anchor) {
+        if (this.layerPopover) this.layerPopover.remove();
+        const settings = this.imageSettings[key];
+        if (!settings) return;
+        const pop = document.createElement('div');
+        pop.className = 'layer-popover';
+        pop.style.zIndex = '20';
+        pop.addEventListener('click', (e) => e.stopPropagation());
+        const onClose = () => { document.removeEventListener('mousedown', outside); pop.remove(); this.layerPopover = null; };
+        const outside = (ev) => { if (!pop.contains(ev.target)) onClose(); };
+        setTimeout(() => document.addEventListener('mousedown', outside), 0);
+
+        const ent = (this.section.msiSeries || {})[key] || (this.section.images || {})[key];
+        const meta = ent && ent.compoundMeta;
+        const title = (meta && meta.base) || formatDisplayName(key);
+        const head = document.createElement('div');
+        head.style.cssText = 'font-weight:600;color:#0f172a;margin-bottom:4px;font-size:11px;';
+        head.textContent = title;
+        pop.appendChild(head);
+
+        const opcRow = document.createElement('div');
+        opcRow.style.cssText = 'margin-bottom:6px;';
+        opcRow.innerHTML =
+            '<div style="color:#475569;margin-bottom:2px;display:flex;justify-content:space-between;">' +
+                '<span>Opacity</span>' +
+                '<span class="opc-val">' + Math.round(settings.opacity * 100) + '%</span>' +
+            '</div>' +
+            '<input type="range" min="0" max="100" step="1" value="' + Math.round(settings.opacity * 100) + '" class="opc" style="width:100%;">';
+        pop.appendChild(opcRow);
+
+        const actions = document.createElement('div');
+        actions.style.cssText = 'display:flex;gap:6px;justify-content:flex-end;margin-top:6px;';
+        actions.innerHTML =
+            '<button class="btn rm" style="padding:2px 8px;font-size:11px;color:#b91c1c;border-color:#fca5a5;">Remove</button>' +
+            '<button class="btn close" style="padding:2px 8px;font-size:11px;">Close</button>';
+        pop.appendChild(actions);
+
+        anchor.style.position = 'relative';
+        anchor.appendChild(pop);
+        this.layerPopover = pop;
+
+        const opc = pop.querySelector('.opc');
+        const opcVal = pop.querySelector('.opc-val');
+        opc.addEventListener('input', () => {
+            const v = Math.max(0, Math.min(100, parseInt(opc.value) || 0));
+            settings.opacity = v / 100;
+            opcVal.textContent = v + '%';
+            this.renderComposite();
+        });
+        actions.querySelector('.rm').addEventListener('click', () => {
+            onClose();
+            this.removeLayer(key);
+        });
+        actions.querySelector('.close').addEventListener('click', onClose);
+    }
+
     openLayerPopover(key, anchor) {
         if (this.layerPopover) this.layerPopover.remove();
         const settings = this.imageSettings[key];
@@ -1734,6 +1968,10 @@ class SectionPanel {
             if (this.visibleLayers.has(key)) box.classList.add('active');
             box.dataset.key = key;
             box.addEventListener('click', (ev) => this.handleLayerClick(key, ev));
+            box.addEventListener('contextmenu', (ev) => {
+                ev.preventDefault();
+                this.openThumbPopover(key, cell);
+            });
             const im = document.createElement('img');
             im.alt = formatDisplayName(key);
             im.src = this.imageDataUrls[key];
@@ -3122,10 +3360,25 @@ const App = {
     activeRoiId: null,
     drawing: { mode: false, sectionId: null, vertices: [], targetRoiId: null },
     saveTimer: 0,
+    // Shared thumb-row height across every section panel (px). The
+    // section-internal splitter writes this on drag and re-broadcasts
+    // it to each panel via the --thumb-h CSS variable.
+    thumbHeight: 220,
+
+    setThumbHeight(h) {
+        this.thumbHeight = Math.max(80, Math.round(h || 0) || 220);
+        document.querySelectorAll('.section-panel').forEach(el => {
+            el.style.setProperty('--thumb-h', this.thumbHeight + 'px');
+        });
+        try { localStorage.setItem('desi:layout:sectionThumbH', String(this.thumbHeight)); } catch (e) {}
+    },
 
     async init() {
         await ProjectStorage.open();
         setupSplitters();
+        const persistedTh = parseInt(localStorage.getItem('desi:layout:sectionThumbH') || '', 10);
+        if (Number.isFinite(persistedTh) && persistedTh > 0) this.thumbHeight = persistedTh;
+        document.documentElement.style.setProperty('--thumb-h', this.thumbHeight + 'px');
         await this.refreshProjectPicker();
         const last = localStorage.getItem('desi:lastProjectId');
         if (last) {
