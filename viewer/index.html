@@ -42,6 +42,16 @@ body { font-family: 'Inter', sans-serif; background-color: #f4f4f5; }
 .section-panel .sec-range .range-sep { font-size:10px; color:#94a3b8; }
 .section-panel .sec-range input { width:80px; padding:2px 4px; font-size:11px; border:1px solid #cbd5e1; border-radius:3px; text-align:right; background:#fff; }
 .section-panel .sec-range input:disabled { background:#f1f5f9; color:#9ca3af; }
+#method-rows .marker-swatch { width:14px; height:14px; border-radius:50%; border:1px solid #cbd5e1; cursor:pointer; padding:0; vertical-align:middle; }
+#method-rows .marker-swatch:hover { border-color:#1d4ed8; }
+#method-rows .marker-input { width:0; height:0; opacity:0; pointer-events:none; position:absolute; }
+.splitter { background:transparent; flex-shrink:0; }
+.splitter:hover, .splitter.dragging { background:#60a5fa; }
+.splitter-h { width:6px; cursor:col-resize; align-self:stretch; }
+.splitter-v { height:6px; cursor:row-resize; }
+body.splitting, body.splitting * { user-select:none !important; }
+body.splitting-h { cursor:col-resize !important; }
+body.splitting-v { cursor:row-resize !important; }
 .section-panel .viewer-host { position:relative; flex:1 1 auto; min-height:320px; background:#000; }
 .section-panel .viewer-rot { position:absolute; inset:0; transform-origin:50% 50%; transform:rotate(-90deg); }
 .section-panel canvas.disp { position:absolute; }
@@ -115,11 +125,11 @@ body { font-family: 'Inter', sans-serif; background-color: #f4f4f5; }
     </header>
 
     <!-- Three-column layout -->
-    <div class="flex flex-1 overflow-hidden gap-1 p-1 min-h-0">
+    <div class="flex flex-1 overflow-hidden gap-0 p-1 min-h-0" id="main-row">
         <!-- Left sidebar -->
-        <aside class="flex flex-col gap-1 overflow-hidden" style="width:300px; min-width:280px;">
+        <aside id="sidebar-left" class="flex flex-col gap-1 overflow-hidden shrink-0" style="width:300px; min-width:200px;">
             <!-- ROI LIST -->
-            <div class="bg-white p-2 rounded shadow-sm flex-1 flex flex-col overflow-hidden min-h-0">
+            <div id="panel-roi" class="bg-white p-2 rounded shadow-sm flex flex-col overflow-hidden min-h-0" style="flex:1 1 0;">
                 <div class="flex items-center justify-between mb-1 border-b pb-1 shrink-0 gap-1">
                     <h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wide">ROI List</h2>
                     <div class="flex items-center gap-2">
@@ -142,13 +152,15 @@ body { font-family: 'Inter', sans-serif; background-color: #f4f4f5; }
                 </div>
             </div>
 
+            <div id="splitter-roi-method" class="splitter splitter-v" title="Drag to resize"></div>
             <!-- Method (MRM) - moved here from ANALYSIS panel -->
-            <details id="method-panel" class="bg-white rounded shadow-sm shrink-0 border border-gray-200" open>
-                <summary class="text-[11px] font-semibold text-gray-600 px-2 py-1 cursor-pointer select-none bg-gray-50 rounded-t">Method (MRM)</summary>
-                <div id="method-body" class="overflow-auto" style="max-height:38vh;">
+            <details id="method-panel" class="bg-white rounded shadow-sm border border-gray-200 shrink-0 flex flex-col overflow-hidden" style="height:240px; min-height:80px;" open>
+                <summary class="text-[11px] font-semibold text-gray-600 px-2 py-1 cursor-pointer select-none bg-gray-50 rounded-t shrink-0">Method (MRM)</summary>
+                <div id="method-body" class="overflow-auto flex-1 min-h-0">
                     <table class="w-full text-[11px] border-collapse">
                         <thead class="bg-gray-50" style="position:sticky;top:0;z-index:1;">
                             <tr>
+                                <th class="px-1 py-1 border-b border-gray-200 font-medium text-gray-500" title="Click to set marker colour"></th>
                                 <th class="text-left px-2 py-1 border-b border-gray-200 font-medium text-gray-500">Compound</th>
                                 <th class="text-right px-2 py-1 border-b border-gray-200 font-medium text-gray-500">Precursor</th>
                                 <th class="text-right px-2 py-1 border-b border-gray-200 font-medium text-gray-500">Fragment</th>
@@ -159,15 +171,17 @@ body { font-family: 'Inter', sans-serif; background-color: #f4f4f5; }
                             </tr>
                         </thead>
                         <tbody id="method-rows">
-                            <tr><td colspan="7" class="px-2 py-2 text-center text-gray-400">No compound</td></tr>
+                            <tr><td colspan="8" class="px-2 py-2 text-center text-gray-400">No compound</td></tr>
                         </tbody>
                     </table>
                 </div>
             </details>
         </aside>
 
+        <div id="splitter-left-main" class="splitter splitter-h" title="Drag to resize"></div>
+
         <!-- Center: sections grid -->
-        <main class="flex-1 min-w-0 overflow-hidden bg-white rounded shadow-sm flex flex-col">
+        <main id="main-center" class="flex-1 min-w-0 overflow-hidden bg-white rounded shadow-sm flex flex-col">
             <div class="flex items-center justify-between px-2 py-1 border-b shrink-0">
                 <h2 class="text-sm font-semibold">Sections</h2>
                 <span class="text-[11px] text-gray-500" id="section-count">0 sections</span>
@@ -187,9 +201,11 @@ body { font-family: 'Inter', sans-serif; background-color: #f4f4f5; }
             </div>
         </main>
 
+        <div id="splitter-main-right" class="splitter splitter-h" title="Drag to resize"></div>
+
         <!-- Right: ANALYSIS -->
-        <aside class="flex flex-col gap-1 overflow-hidden" style="width:420px; min-width:360px;">
-            <div class="bg-white p-2 rounded shadow-sm flex-1 flex flex-col overflow-hidden min-h-0">
+        <aside id="sidebar-right" class="flex flex-col gap-1 overflow-hidden shrink-0" style="width:420px; min-width:240px;">
+            <div id="panel-analysis" class="bg-white p-2 rounded shadow-sm flex flex-col overflow-hidden min-h-0" style="flex:1 1 0;">
                 <div class="flex justify-between items-center shrink-0 mb-1">
                     <h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Analysis</h2>
                     <span id="analysis-scope" class="text-[10px] text-gray-400"></span>
@@ -204,7 +220,11 @@ body { font-family: 'Inter', sans-serif; background-color: #f4f4f5; }
                 <div id="graph-container" class="flex-1 flex items-center justify-center border border-gray-200 rounded overflow-hidden min-h-0 bg-gray-50">
                     <p class="text-gray-400 text-xs">Select a ROI</p>
                 </div>
-                <details id="memo-panel" class="mt-1 border border-gray-200 rounded shrink-0" open>
+            </div>
+
+            <div id="splitter-graph-memo" class="splitter splitter-v" title="Drag to resize"></div>
+
+            <details id="memo-panel" class="bg-white rounded shadow-sm border border-gray-200 shrink-0 flex flex-col overflow-hidden" style="height:240px; min-height:80px;" open>
                     <summary class="text-[11px] font-semibold text-gray-600 px-2 py-1 cursor-pointer select-none bg-gray-50 rounded-t">Memo</summary>
                     <div class="p-2 space-y-1.5 text-[11px]">
                         <div class="flex items-center gap-2"><span class="w-24 shrink-0 text-gray-500">Sample</span><input id="memo-sample" type="text" class="flex-1 border border-gray-200 rounded px-1.5 py-0.5 text-[11px]"></div>
@@ -215,7 +235,6 @@ body { font-family: 'Inter', sans-serif; background-color: #f4f4f5; }
                         <div class="flex items-center gap-2"><span class="w-24 shrink-0 text-gray-500">Derivatization</span><input id="memo-derivatization" type="text" class="flex-1 border border-gray-200 rounded px-1.5 py-0.5 text-[11px]"></div>
                     </div>
                 </details>
-            </div>
         </aside>
     </div>
 </div>
@@ -573,6 +592,38 @@ async function decodeImageBlobToDataUrl(blob, mime) {
     }
     return await blobToDataUrl(blob);
 }
+
+// 256-step Plasma colormap LUT (matplotlib-style). Built once at module load
+// from a small set of stops and used to colour MSI rasters in
+// rasterRowsToPngDataUrl below.
+const PLASMA_LUT = (function () {
+    const stops = [
+        [0.000,  13,   8, 135],
+        [0.125,  75,   3, 161],
+        [0.250, 125,   3, 168],
+        [0.375, 168,  34, 150],
+        [0.500, 203,  70, 121],
+        [0.625, 229, 107,  93],
+        [0.750, 248, 148,  65],
+        [0.875, 253, 195,  40],
+        [1.000, 240, 249,  33],
+    ];
+    const lut = new Array(256);
+    for (let i = 0; i < 256; i++) {
+        const t = i / 255;
+        let a = stops[0], b = stops[stops.length - 1];
+        for (let j = 0; j < stops.length - 1; j++) {
+            if (t >= stops[j][0] && t <= stops[j + 1][0]) { a = stops[j]; b = stops[j + 1]; break; }
+        }
+        const f = b[0] === a[0] ? 0 : (t - a[0]) / (b[0] - a[0]);
+        lut[i] = [
+            Math.round(a[1] + (b[1] - a[1]) * f),
+            Math.round(a[2] + (b[2] - a[2]) * f),
+            Math.round(a[3] + (b[3] - a[3]) * f),
+        ];
+    }
+    return lut;
+})();
 
 function rasterRowsToPngDataUrl(rows, range) {
     const xs = [...new Set(rows.map(r => r.x))].sort((a, b) => a - b);
@@ -984,6 +1035,7 @@ class SectionPanel {
             this.activeMsiKey = this.fallbackActiveMsiKey() || msiKeys[0] || null;
         }
         this.refreshRangeEditor();
+        this.refreshActiveOutline();
     }
 
     firstLayerKey() {
@@ -1016,9 +1068,14 @@ class SectionPanel {
         this.imageDataUrls[key] = dataUrl;
         // Persist the raw MSI value range so the Method (MRM) table can show
         // intensity Mean/Max in the original scale rather than 0-255 luminance.
+        // Legacy projects (registered before these fields existed) had blank
+        // Mean/Max in the table; flag missing-on-disk so we IDB-save once.
         if (this.section.msiSeries && this.section.msiSeries[key]) {
-            if (rawRange) this.section.msiSeries[key].rawRange = rawRange;
-            if (rawMean != null) this.section.msiSeries[key].rawMean = rawMean;
+            const entRef = this.section.msiSeries[key];
+            const wasMissing = !Array.isArray(entRef.rawRange) || !Number.isFinite(entRef.rawMean);
+            if (rawRange) entRef.rawRange = rawRange;
+            if (rawMean != null) entRef.rawMean = rawMean;
+            if (wasMissing && (rawRange || rawMean != null) && App && App.queueSave) App.queueSave();
         }
         await this.attachImage(key, dataUrl);
     }
@@ -1143,20 +1200,20 @@ class SectionPanel {
             const data = tctx.getImageData(0, 0, tc.width, tc.height);
             const d = data.data;
             const range = (settings.vmax - settings.vmin) || 1;
-            const msiColor = getMsiColor(key);
+            const isMsiLayer = /^MSI_/i.test(key);
 
             for (let i = 0; i < d.length; i += 4) {
                 const r = d[i], g = d[i+1], b = d[i+2], a = d[i+3];
                 const lum = 0.299*r + 0.587*g + 0.114*b;
                 const n = Math.max(0, Math.min(1, (lum - settings.vmin) / range));
-                if (msiColor) {
+                if (isMsiLayer) {
+                    // MSI layers are quantised greyscale at registration time. Re-map
+                    // the windowed luminance through the Plasma LUT for display so
+                    // every compound shares a single intensity colormap.
                     if (a === 0 || (lum < 1 && n < 0.01)) { d[i] = 0; d[i+1] = 0; d[i+2] = 0; d[i+3] = 0; }
                     else {
-                        const bright = Math.pow(n, 0.5);
-                        d[i]   = Math.min(255, Math.round(msiColor[0] * bright));
-                        d[i+1] = Math.min(255, Math.round(msiColor[1] * bright));
-                        d[i+2] = Math.min(255, Math.round(msiColor[2] * bright));
-                        d[i+3] = 255;
+                        const c = PLASMA_LUT[Math.round(n * 255)];
+                        d[i] = c[0]; d[i+1] = c[1]; d[i+2] = c[2]; d[i+3] = 255;
                     }
                 } else {
                     const target = n * 255;
@@ -1339,20 +1396,30 @@ class SectionPanel {
 
         const mkChip = (key) => {
             const chip = document.createElement('div');
-            chip.className = 'layer-chip' + (this.visibleLayers.has(key) ? ' on' : '');
-            const c = getMsiColor(key);
-            if (c) {
-                const dot = document.createElement('span');
-                dot.className = 'dot';
-                dot.style.background = 'rgb(' + c.join(',') + ')';
-                chip.appendChild(dot);
-            }
-            const label = document.createElement('span');
+            const isMsiKey = /^MSI_/i.test(key);
+            chip.className = 'layer-chip' + (this.visibleLayers.has(key) ? ' on' : '') + (isMsiKey ? ' msi' : '');
             const ent = (this.section.msiSeries || {})[key];
             const meta = ent && ent.compoundMeta;
-            label.textContent = (meta && meta.base) || formatDisplayName(key);
-            label.title = formatDisplayName(key);
-            chip.appendChild(label);
+            const fullLabel = (meta && meta.base) || formatDisplayName(key);
+            // Show a colour dot. For MSI layers the marker colour wins (if set);
+            // otherwise fall back to the per-compound palette.
+            const markerColor = ent && ent.markerColor ? ent.markerColor : null;
+            const c = getMsiColor(key);
+            const dot = document.createElement('span');
+            dot.className = 'dot';
+            if (markerColor) dot.style.background = markerColor;
+            else if (c) dot.style.background = 'rgb(' + c.join(',') + ')';
+            else dot.style.background = '#cbd5e1';
+            chip.appendChild(dot);
+            // Compound name text is only shown for non-MSI chips. MSI chips
+            // identify their layer via thumbnail captions to keep the chip
+            // bar compact when many compounds share a file.
+            if (!isMsiKey) {
+                const label = document.createElement('span');
+                label.textContent = fullLabel;
+                chip.appendChild(label);
+            }
+            chip.title = fullLabel;
             const gear = document.createElement('span');
             gear.className = 'gear';
             gear.textContent = '⚙';
@@ -1450,6 +1517,7 @@ class SectionPanel {
         this.drawAllRois();
         this.refreshThumbHighlights();
         this.refreshRangeEditor();
+        this.refreshActiveOutline();
         if (App.activeSectionId === this.section.id) renderMethodTable();
     }
 
@@ -1468,12 +1536,50 @@ class SectionPanel {
         this.drawAllRois();
         this.refreshThumbHighlights();
         this.refreshRangeEditor();
+        this.refreshActiveOutline();
         if (App.activeSectionId === this.section.id) renderMethodTable();
     }
 
     fallbackActiveMsiKey() {
         for (const k of this.visibleLayers) if (/^MSI_/i.test(k)) return k;
         return null;
+    }
+
+    // Repaint the marker-colour outline on the thumbnail cell for a given
+    // layer key, plus the outer Section panel border if this layer happens
+    // to be the currently active MSI layer.
+    refreshMarkerOutline(layerKey) {
+        const ent = this.section.msiSeries && this.section.msiSeries[layerKey];
+        const color = ent && ent.markerColor ? ent.markerColor : null;
+        const cell = this.dom && this.dom.thumbCells && this.dom.thumbCells.get(layerKey);
+        if (cell) {
+            if (color) {
+                cell.style.outline = '3px solid ' + color;
+                cell.style.outlineOffset = '-1px';
+                cell.style.borderRadius = '2px';
+            } else {
+                cell.style.outline = '';
+                cell.style.outlineOffset = '';
+            }
+        }
+        this.refreshActiveOutline();
+    }
+
+    // Drive the Section-panel outer border from the *active* MSI layer's
+    // marker colour. Called whenever active layer or marker colour changes.
+    refreshActiveOutline() {
+        const root = this.dom && this.dom.root;
+        if (!root) return;
+        const key = this.activeMsiKey;
+        const ent = key && this.section.msiSeries && this.section.msiSeries[key];
+        const color = ent && ent.markerColor ? ent.markerColor : null;
+        if (color) {
+            root.style.outline = '3px solid ' + color;
+            root.style.outlineOffset = '-1px';
+        } else {
+            root.style.outline = '';
+            root.style.outlineOffset = '';
+        }
     }
 
     refreshRangeEditor() {
@@ -1528,6 +1634,7 @@ class SectionPanel {
         this.renderEmptyOverlay();
         this.setupCanvasSize();
         this.refreshRangeEditor();
+        this.refreshActiveOutline();
         if (App.activeSectionId === this.section.id) renderMethodTable();
         App.queueSave();
     }
@@ -1585,6 +1692,10 @@ class SectionPanel {
         const host = this.dom.thumbs;
         host.innerHTML = '';
         this.msiThumbRefs.clear();
+        // Track thumb cells per layer key so refreshMarkerOutline can paint
+        // the cell outline without re-running populateThumbnails.
+        if (!this.dom.thumbCells) this.dom.thumbCells = new Map();
+        else this.dom.thumbCells.clear();
         const allKeys = Object.keys(this.imageSources);
         if (!allKeys.length) return;
 
@@ -1649,6 +1760,13 @@ class SectionPanel {
                 if (im.complete && im.naturalWidth) this.renderMsiThumbnail(key);
                 else im.addEventListener('load', onLoad);
             }
+            this.dom.thumbCells.set(key, cell);
+            const ent2 = (this.section.msiSeries || {})[key];
+            if (ent2 && ent2.markerColor) {
+                cell.style.outline = '3px solid ' + ent2.markerColor;
+                cell.style.outlineOffset = '-1px';
+                cell.style.borderRadius = '2px';
+            }
             return cell;
         };
 
@@ -1692,15 +1810,13 @@ class SectionPanel {
         const d = data.data;
         const st = this.imageSettings[key] || { vmin: 0, vmax: 255 };
         const range = (st.vmax - st.vmin) || 1;
-        const color = getMsiColor(key);
         for (let i = 0; i < d.length; i += 4) {
             if (d[i+3] === 0) continue;
             const lum = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
             if (lum < 1) { d[i] = 0; d[i+1] = 0; d[i+2] = 0; continue; }
             const n = Math.max(0, Math.min(1, (lum - st.vmin) / range));
-            const bright = Math.pow(n, 0.5);
-            if (color) { d[i] = Math.min(255, Math.round(color[0]*bright)); d[i+1] = Math.min(255, Math.round(color[1]*bright)); d[i+2] = Math.min(255, Math.round(color[2]*bright)); }
-            else { const v = Math.min(255, Math.round(255 * bright)); d[i] = v; d[i+1] = v; d[i+2] = v; }
+            const c = PLASMA_LUT[Math.round(n * 255)];
+            d[i] = c[0]; d[i+1] = c[1]; d[i+2] = c[2];
         }
         ctx.putImageData(data, 0, 0);
         im.src = c.toDataURL();
@@ -2054,6 +2170,100 @@ function renderMemoForm() {
     }
 }
 
+// Wire up the 4 layout splitters (left/right side widths, ROI/Method height,
+// Graph/Memo height). Drag values are persisted to localStorage so they
+// survive reloads.
+function setupSplitters() {
+    const LS = {
+        left: 'desi:layout:leftWidth',
+        right: 'desi:layout:rightWidth',
+        method: 'desi:layout:methodHeight',
+        memo: 'desi:layout:memoHeight',
+    };
+    const sidebarLeft = document.getElementById('sidebar-left');
+    const sidebarRight = document.getElementById('sidebar-right');
+    const methodPanel = document.getElementById('method-panel');
+    const memoPanel = document.getElementById('memo-panel');
+    const restorePx = (el, prop, key, min, max) => {
+        if (!el) return;
+        const v = parseInt(localStorage.getItem(key) || '', 10);
+        if (Number.isFinite(v)) el.style[prop] = Math.min(max, Math.max(min, v)) + 'px';
+    };
+    restorePx(sidebarLeft, 'width', LS.left, 200, 800);
+    restorePx(sidebarRight, 'width', LS.right, 240, 1000);
+    restorePx(methodPanel, 'height', LS.method, 80, window.innerHeight - 200);
+    restorePx(memoPanel, 'height', LS.memo, 80, window.innerHeight - 200);
+
+    const startDrag = (splitter, axis, onMove) => {
+        splitter.addEventListener('pointerdown', (ev) => {
+            if (ev.button !== 0) return;
+            ev.preventDefault();
+            splitter.setPointerCapture(ev.pointerId);
+            splitter.classList.add('dragging');
+            document.body.classList.add('splitting', axis === 'x' ? 'splitting-h' : 'splitting-v');
+            const start = { x: ev.clientX, y: ev.clientY };
+            const move = (e) => onMove(e.clientX - start.x, e.clientY - start.y, e);
+            const up = (e) => {
+                splitter.releasePointerCapture(ev.pointerId);
+                splitter.classList.remove('dragging');
+                document.body.classList.remove('splitting', 'splitting-h', 'splitting-v');
+                splitter.removeEventListener('pointermove', move);
+                splitter.removeEventListener('pointerup', up);
+                splitter.removeEventListener('pointercancel', up);
+            };
+            splitter.addEventListener('pointermove', move);
+            splitter.addEventListener('pointerup', up);
+            splitter.addEventListener('pointercancel', up);
+        });
+    };
+
+    const sLeftMain = document.getElementById('splitter-left-main');
+    if (sLeftMain && sidebarLeft) {
+        let initial = 0;
+        sLeftMain.addEventListener('pointerdown', () => { initial = sidebarLeft.getBoundingClientRect().width; });
+        startDrag(sLeftMain, 'x', (dx) => {
+            const w = Math.min(800, Math.max(200, initial + dx));
+            sidebarLeft.style.width = w + 'px';
+            localStorage.setItem(LS.left, String(Math.round(w)));
+        });
+    }
+
+    const sMainRight = document.getElementById('splitter-main-right');
+    if (sMainRight && sidebarRight) {
+        let initial = 0;
+        sMainRight.addEventListener('pointerdown', () => { initial = sidebarRight.getBoundingClientRect().width; });
+        startDrag(sMainRight, 'x', (dx) => {
+            const w = Math.min(1000, Math.max(240, initial - dx));
+            sidebarRight.style.width = w + 'px';
+            localStorage.setItem(LS.right, String(Math.round(w)));
+        });
+    }
+
+    const sRoiMethod = document.getElementById('splitter-roi-method');
+    if (sRoiMethod && methodPanel && sidebarLeft) {
+        let initial = 0;
+        sRoiMethod.addEventListener('pointerdown', () => { initial = methodPanel.getBoundingClientRect().height; });
+        startDrag(sRoiMethod, 'y', (_dx, dy) => {
+            const sidebarH = sidebarLeft.getBoundingClientRect().height;
+            const h = Math.min(sidebarH - 120, Math.max(80, initial - dy));
+            methodPanel.style.height = h + 'px';
+            localStorage.setItem(LS.method, String(Math.round(h)));
+        });
+    }
+
+    const sGraphMemo = document.getElementById('splitter-graph-memo');
+    if (sGraphMemo && memoPanel && sidebarRight) {
+        let initial = 0;
+        sGraphMemo.addEventListener('pointerdown', () => { initial = memoPanel.getBoundingClientRect().height; });
+        startDrag(sGraphMemo, 'y', (_dx, dy) => {
+            const sidebarH = sidebarRight.getBoundingClientRect().height;
+            const h = Math.min(sidebarH - 120, Math.max(80, initial - dy));
+            memoPanel.style.height = h + 'px';
+            localStorage.setItem(LS.memo, String(Math.round(h)));
+        });
+    }
+}
+
 // Look up the first compoundMeta across all sections that matches a given layer key.
 function findCompoundMeta(project, layerKey) {
     for (const sec of (project.sections || [])) {
@@ -2083,7 +2293,7 @@ function renderMethodTable() {
         });
 
     if (!layerKeys.length) {
-        tbody.innerHTML = '<tr><td colspan="7" class="px-2 py-2 text-center text-gray-400">No MSI layer in this section</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="px-2 py-2 text-center text-gray-400">No MSI layer in this section</td></tr>';
         return;
     }
 
@@ -2107,7 +2317,16 @@ function renderMethodTable() {
         tr.className = 'method-row' + (isActive ? ' active' : '');
         tr.dataset.layerKey = layerKey;
 
+        const markerColor = ent.markerColor || '';
+        const markerSwatchStyle = markerColor
+            ? 'background:' + markerColor + ';border-color:' + markerColor + ';'
+            : 'background:transparent;';
+
         const cellHtml = '' +
+            '<td class="px-1 py-1 border-b border-gray-100 text-center" data-cell="marker">' +
+                '<button type="button" class="marker-swatch" title="Set marker colour" style="' + markerSwatchStyle + '"></button>' +
+                '<input type="color" class="marker-input" value="' + (markerColor || '#ff0000') + '" tabindex="-1">' +
+            '</td>' +
             '<td class="px-2 py-1 border-b border-gray-100 text-gray-700 font-mono text-[11px]" title="' + safe(formatDisplayName(layerKey)) + '">' + safe(compoundName) + '</td>' +
             '<td class="px-2 py-1 border-b border-gray-100 text-right text-gray-700">' + safe(pre) + '</td>' +
             '<td class="px-2 py-1 border-b border-gray-100 text-right text-gray-700">' + safe(pro) + '</td>' +
@@ -2117,13 +2336,47 @@ function renderMethodTable() {
             '<td class="px-2 py-1 border-b border-gray-100 text-right text-gray-700">' + safe(rawMax) + '</td>';
         tr.innerHTML = cellHtml;
 
+        const swatch = tr.querySelector('.marker-swatch');
+        const colorInput = tr.querySelector('.marker-input');
+        swatch.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            // Right click (or shift) clears the marker.
+            if (ev.shiftKey || ev.button === 2) {
+                applyMarkerColor(panel, layerKey, null);
+                return;
+            }
+            colorInput.click();
+        });
+        swatch.addEventListener('contextmenu', (ev) => {
+            ev.preventDefault(); ev.stopPropagation();
+            applyMarkerColor(panel, layerKey, null);
+        });
+        colorInput.addEventListener('input', (ev) => {
+            applyMarkerColor(panel, layerKey, ev.target.value);
+        });
+        colorInput.addEventListener('click', (ev) => ev.stopPropagation());
+
         tr.addEventListener('click', (ev) => {
+            if (ev.target && (ev.target.classList.contains('marker-swatch') || ev.target.classList.contains('marker-input'))) return;
             const p = App.activeSectionId ? App.panels.get(App.activeSectionId) : null;
             if (p) p.handleLayerClick(layerKey, ev);
         });
 
         tbody.appendChild(tr);
     }
+}
+
+// Persist a marker colour on a single MSI layer and refresh the bits of UI
+// (Method table, thumbnail outline, Section panel outline) that rely on it.
+function applyMarkerColor(panel, layerKey, color) {
+    const ent = panel.section.msiSeries && panel.section.msiSeries[layerKey];
+    if (!ent) return;
+    if (color) ent.markerColor = color;
+    else delete ent.markerColor;
+    panel.refreshMarkerOutline(layerKey);
+    panel.rebuildLayerBar();
+    renderMethodTable();
+    App.queueSave();
 }
 
 function drawSectionMultiBar(canvas, sections, channels, stats, roi) {
@@ -2872,6 +3125,7 @@ const App = {
 
     async init() {
         await ProjectStorage.open();
+        setupSplitters();
         await this.refreshProjectPicker();
         const last = localStorage.getItem('desi:lastProjectId');
         if (last) {
@@ -2892,7 +3146,7 @@ const App = {
         document.getElementById('graph-container').innerHTML = '<p class="text-gray-400 text-xs">No project</p>';
         ['graph-select-1', 'graph-select-2', 'graph-select-3'].forEach(id => document.getElementById(id).innerHTML = '');
         const tbody = document.getElementById('method-rows');
-        if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="px-2 py-2 text-center text-gray-400">No project</td></tr>';
+        if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="px-2 py-2 text-center text-gray-400">No project</td></tr>';
         renderMemoForm();
         this.refreshAnalysisScope();
     },
