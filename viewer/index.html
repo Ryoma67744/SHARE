@@ -29,8 +29,13 @@ body { font-family: 'Inter', sans-serif; background-color: #f4f4f5; }
 .modal-card .actions { display:flex; gap:6px; justify-content:flex-end; margin-top:14px; }
 .modal-card .err { color:#b91c1c; font-size:11px; min-height:1em; margin-top:6px; }
 .modal-card .field-row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-.section-panel { background:#fff; border-radius:6px; box-shadow:0 1px 2px rgba(0,0,0,0.06); display:flex; flex-direction:column; min-width:320px; min-height:380px; outline:2px solid transparent; outline-offset:-2px; transition:outline-color 0.15s; overflow:hidden; }
-.section-panel.active { outline-color:#3b82f6; }
+/* SectionPanel is a logical wrapper only — its real children (canvas-cell
+   and thumbs-cell) live directly in the #sections-grid grid so that all
+   sections share canvas row 1 and thumbnail row 2. */
+.section-panel { display:contents; }
+.sec-canvas-cell { background:#000; display:flex; flex-direction:column; min-width:280px; min-height:240px; overflow:hidden; outline:1px solid transparent; outline-offset:-1px; transition:outline-color 0.15s; position:relative; }
+.sec-canvas-cell.active { outline-color:#60a5fa; }
+.sec-thumbs-cell { background:#fff; display:flex; flex-direction:column; min-width:280px; overflow:auto; border-top:1px solid #e5e7eb; }
 .section-panel header { display:flex; align-items:center; gap:6px; padding:5px 8px; border-bottom:1px solid #e5e7eb; background:#f9fafb; }
 .section-panel header input.sec-name { flex:1 1 auto; min-width:0; font-size:12px; font-weight:600; padding:2px 4px; border:1px solid transparent; background:transparent; border-radius:3px; color:#111827; }
 .section-panel header input.sec-name:focus { border-color:#cbd5e1; background:#fff; outline:none; }
@@ -84,9 +89,9 @@ body.splitting-v { cursor:row-resize !important; }
 .section-panel .layer-chip .dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
 .section-panel .layer-chip .gear { color:#64748b; }
 .section-panel .layer-chip .gear:hover { color:#1d4ed8; }
-.section-panel .thumb-row { padding:4px 6px 6px 6px; flex:0 0 var(--thumb-h, 220px); min-height:80px; overflow-y:auto; display:flex; flex-direction:column; gap:4px; }
-.section-panel .section-splitter { background:#e5e7eb; height:6px; cursor:row-resize; flex-shrink:0; }
-.section-panel .section-splitter:hover, .section-panel .section-splitter.dragging { background:#60a5fa; }
+.section-panel .thumb-row { padding:4px 6px 6px 6px; flex:1 1 auto; min-height:80px; overflow-y:auto; display:flex; flex-direction:column; gap:4px; }
+#sections-splitter { position:absolute; left:0; right:0; bottom:var(--thumb-h, 220px); height:6px; margin-bottom:-3px; cursor:row-resize; background:transparent; z-index:5; }
+#sections-splitter:hover, #sections-splitter.dragging { background:#60a5fa; }
 .section-panel .thumb-file-group { border:1px solid #e5e7eb; border-radius:4px; padding:2px 4px; }
 .section-panel .thumb-file-group > summary { cursor:pointer; font-size:11px; color:#334155; display:flex; align-items:center; gap:4px; user-select:none; outline:none; padding:1px 2px; }
 .section-panel .thumb-file-group > summary::-webkit-details-marker { display:none; }
@@ -107,7 +112,7 @@ body.splitting-v { cursor:row-resize !important; }
 .color-swatch { width:0.85rem; height:0.85rem; border-radius:0.2rem; display:inline-block; margin-right:0.4rem; vertical-align:middle; border:1px solid #cbd5e1; }
 #roi-toggle:checked ~ #roi-toggle-bg { background-color:#3b82f6; }
 #roi-toggle:checked ~ #roi-toggle-dot { transform:translateX(1rem); }
-#sections-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(360px, 1fr)); grid-auto-rows:minmax(380px, 1fr); gap:6px; padding:6px; overflow:auto; align-content:stretch; height:100%; }
+#sections-grid { display:grid; grid-template-rows:1fr var(--thumb-h, 220px); grid-auto-flow:column; grid-auto-columns:minmax(280px, 1fr); gap:0; padding:0; overflow:auto; height:100%; position:relative; }
 .empty-shell { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; height:100%; color:#475569; padding:30px; text-align:center; }
 .empty-shell h2 { font-size:18px; font-weight:600; color:#0f172a; }
 .empty-shell p { max-width:520px; font-size:13px; line-height:1.5; }
@@ -909,7 +914,19 @@ class SectionPanel {
         root.className = 'section-panel';
         root.dataset.sectionId = this.section.id;
         root.style.setProperty('--thumb-h', (App.thumbHeight || 220) + 'px');
-        root.addEventListener('click', () => App.setActiveSection(this.section.id));
+
+        // The panel is split into two grid cells that live directly inside
+        // #sections-grid: a top "canvas cell" (header + viewer-host, on row 1)
+        // and a bottom "thumbs cell" (layer-bar + thumb-row, on row 2). They
+        // share a grid-column number so clicking either selects this section.
+        const canvasCell = document.createElement('div');
+        canvasCell.className = 'sec-canvas-cell';
+        canvasCell.dataset.sectionId = this.section.id;
+        canvasCell.addEventListener('click', () => App.setActiveSection(this.section.id));
+        const thumbsCell = document.createElement('div');
+        thumbsCell.className = 'sec-thumbs-cell';
+        thumbsCell.dataset.sectionId = this.section.id;
+        thumbsCell.addEventListener('click', () => App.setActiveSection(this.section.id));
 
         const header = document.createElement('header');
         const nameInp = document.createElement('input');
@@ -1023,7 +1040,7 @@ class SectionPanel {
         this._pendingRotInput = rotInp;
         this._pendingRotBox = rotBox;
 
-        root.appendChild(header);
+        canvasCell.appendChild(header);
         const rangeMinInp = rangeBox.querySelector('.range-min');
         const rangeMaxInp = rangeBox.querySelector('.range-max');
         const onRangeChange = (edge) => {
@@ -1061,31 +1078,30 @@ class SectionPanel {
         const croi  = document.createElement('canvas'); croi.className  = 'roi';
         rot.appendChild(cdisp); rot.appendChild(croi);
         host.appendChild(rot);
-        root.appendChild(host);
-        this.dom = { root, header, host, rot, cdisp, croi, acts, rangeBox, rotInput: this._pendingRotInput, rotBox: this._pendingRotBox, opcInput: this._pendingOpcInput, opcBox: this._pendingOpcBox };
+        canvasCell.appendChild(host);
+
+        const layerBar = document.createElement('div');
+        layerBar.className = 'layer-bar';
+        thumbsCell.appendChild(layerBar);
+        const thumbs = document.createElement('div');
+        thumbs.className = 'thumb-row';
+        thumbsCell.appendChild(thumbs);
+
+        root.appendChild(canvasCell);
+        root.appendChild(thumbsCell);
+
+        this.dom = {
+            root, header, host, rot, cdisp, croi, acts, rangeBox,
+            rotInput: this._pendingRotInput, rotBox: this._pendingRotBox,
+            opcInput: this._pendingOpcInput, opcBox: this._pendingOpcBox,
+            canvasCell, thumbsCell, layerBar, thumbs,
+        };
         this._pendingRotInput = null;
         this._pendingRotBox = null;
         this._pendingOpcInput = null;
         this._pendingOpcBox = null;
         this.displayCtx = cdisp.getContext('2d', { willReadFrequently: true });
         this.roiCtx = croi.getContext('2d');
-
-        const layerBar = document.createElement('div');
-        layerBar.className = 'layer-bar';
-        root.appendChild(layerBar);
-        this.dom.layerBar = layerBar;
-
-        const splitter = document.createElement('div');
-        splitter.className = 'section-splitter';
-        splitter.title = 'Drag to resize the thumbnail panel';
-        root.appendChild(splitter);
-        this.dom.splitter = splitter;
-        this._wireSplitter(splitter);
-
-        const thumbs = document.createElement('div');
-        thumbs.className = 'thumb-row';
-        root.appendChild(thumbs);
-        this.dom.thumbs = thumbs;
 
         this.renderEmptyOverlay();
         this.applyViewerTransform();
@@ -1113,7 +1129,10 @@ class SectionPanel {
     }
 
     setActive(active) {
-        this.dom.root.classList.toggle('active', !!active);
+        // section-panel root is display:contents so outline must live on the
+        // canvas cell. Both still toggle for any consumers reading the class.
+        if (this.dom.root) this.dom.root.classList.toggle('active', !!active);
+        if (this.dom.canvasCell) this.dom.canvasCell.classList.toggle('active', !!active);
     }
 
     destroy() {
@@ -1703,17 +1722,19 @@ class SectionPanel {
     // Drive the Section-panel outer border from the *active* MSI layer's
     // marker colour. Called whenever active layer or marker colour changes.
     refreshActiveOutline() {
-        const root = this.dom && this.dom.root;
-        if (!root) return;
+        // The visible outline lives on the canvas cell because the root uses
+        // display:contents and so cannot render its own border.
+        const cell = this.dom && this.dom.canvasCell;
+        if (!cell) return;
         const key = this.activeMsiKey;
         const ent = key && this.section.msiSeries && this.section.msiSeries[key];
         const color = ent && ent.markerColor ? ent.markerColor : null;
         if (color) {
-            root.style.outline = '3px solid ' + color;
-            root.style.outlineOffset = '-1px';
+            cell.style.outline = '3px solid ' + color;
+            cell.style.outlineOffset = '-3px';
         } else {
-            root.style.outline = '';
-            root.style.outlineOffset = '';
+            cell.style.outline = '';
+            cell.style.outlineOffset = '';
         }
     }
 
@@ -1759,6 +1780,10 @@ class SectionPanel {
         let rawMax = rawRange ? lumToRaw(settings.vmax, rawRange) : Number(settings.vmax);
         if (!Number.isFinite(rawMin)) rawMin = rawRange ? rawRange[0] : Number(settings.actualMin);
         if (!Number.isFinite(rawMax)) rawMax = rawRange ? rawRange[1] : Number(settings.actualMax);
+        // Final guard: never let a non-finite value reach the number input,
+        // because '—' (formatRawValue's NaN sentinel) collapses it to blank.
+        if (!Number.isFinite(rawMin)) rawMin = 0;
+        if (!Number.isFinite(rawMax)) rawMax = Number.isFinite(rawMin) ? rawMin + 1 : 1;
         minInp.value = formatRawValue(rawMin);
         maxInp.value = formatRawValue(rawMax);
         box.title = 'Display range for: ' + baseLabel;
@@ -3550,10 +3575,51 @@ const App = {
 
     setThumbHeight(h) {
         this.thumbHeight = Math.max(80, Math.round(h || 0) || 220);
+        // The thumbnail row is grid-row 2 of #sections-grid (a 2-row grid),
+        // so its height is driven by --thumb-h on the grid itself. Section
+        // panels keep the variable too for any local consumers.
+        const grid = document.getElementById('sections-grid');
+        if (grid) grid.style.setProperty('--thumb-h', this.thumbHeight + 'px');
         document.querySelectorAll('.section-panel').forEach(el => {
             el.style.setProperty('--thumb-h', this.thumbHeight + 'px');
         });
         try { localStorage.setItem('desi:layout:sectionThumbH', String(this.thumbHeight)); } catch (e) {}
+    },
+
+    setupGlobalSectionSplitter() {
+        const grid = document.getElementById('sections-grid');
+        if (!grid || grid.querySelector('#sections-splitter')) return;
+        const splitter = document.createElement('div');
+        splitter.id = 'sections-splitter';
+        splitter.title = 'Drag to resize the thumbnail row';
+        grid.appendChild(splitter);
+        let startY = 0, baseH = 0;
+        const onMove = (ev) => {
+            const dy = ev.clientY - startY;
+            const rect = grid.getBoundingClientRect();
+            const newH = Math.max(80, Math.min(rect.height - 160, baseH - dy));
+            this.setThumbHeight(Math.round(newH));
+        };
+        const onUp = (ev) => {
+            try { splitter.releasePointerCapture(ev.pointerId); } catch (e) {}
+            splitter.classList.remove('dragging');
+            document.body.classList.remove('splitting', 'splitting-v');
+            splitter.removeEventListener('pointermove', onMove);
+            splitter.removeEventListener('pointerup', onUp);
+            splitter.removeEventListener('pointercancel', onUp);
+        };
+        splitter.addEventListener('pointerdown', (ev) => {
+            if (ev.button !== 0) return;
+            ev.preventDefault();
+            splitter.setPointerCapture(ev.pointerId);
+            splitter.classList.add('dragging');
+            document.body.classList.add('splitting', 'splitting-v');
+            startY = ev.clientY;
+            baseH = this.thumbHeight;
+            splitter.addEventListener('pointermove', onMove);
+            splitter.addEventListener('pointerup', onUp);
+            splitter.addEventListener('pointercancel', onUp);
+        });
     },
 
     // Per-control sync flags. When a control is "linked", any change made on
@@ -3575,7 +3641,11 @@ const App = {
         try { localStorage.setItem('desi:viewMode', m); } catch (e) {}
         this.refreshViewModeUI();
         for (const p of this.panels.values()) {
-            try { p.renderComposite(); p.refreshActiveOutline && p.refreshActiveOutline(); } catch (e) {}
+            try {
+                p.renderComposite();
+                p.refreshRangeEditor();
+                p.refreshActiveOutline && p.refreshActiveOutline();
+            } catch (e) {}
         }
     },
 
@@ -3583,7 +3653,10 @@ const App = {
         this.focusCompoundKey = key || null;
         try { localStorage.setItem('desi:focusCompoundKey', this.focusCompoundKey || ''); } catch (e) {}
         for (const p of this.panels.values()) {
-            try { p.renderComposite(); } catch (e) {}
+            try {
+                p.renderComposite();
+                p.refreshRangeEditor();
+            } catch (e) {}
         }
         renderMethodTable();
     },
@@ -3652,6 +3725,9 @@ const App = {
         const persistedTh = parseInt(localStorage.getItem('desi:layout:sectionThumbH') || '', 10);
         if (Number.isFinite(persistedTh) && persistedTh > 0) this.thumbHeight = persistedTh;
         document.documentElement.style.setProperty('--thumb-h', this.thumbHeight + 'px');
+        const grid = document.getElementById('sections-grid');
+        if (grid) grid.style.setProperty('--thumb-h', this.thumbHeight + 'px');
+        this.setupGlobalSectionSplitter();
         await this.refreshProjectPicker();
         const last = localStorage.getItem('desi:lastProjectId');
         if (last) {
