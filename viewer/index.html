@@ -59,6 +59,39 @@ body { font-family: 'Inter', sans-serif; background-color: #f4f4f5; }
 .section-panel .sync-toggle { font-size:11px; padding:1px 4px; border:1px solid #cbd5e1; border-radius:3px; background:#fff; cursor:pointer; color:#94a3b8; line-height:1; margin-left:1px; }
 .section-panel .sync-toggle.linked { background:#dbeafe; color:#1d4ed8; border-color:#93c5fd; }
 .section-panel .sync-toggle:hover { background:#eef2ff; }
+/* Shared Section toolbar (lives above #sections-grid, replaces per-panel headers). */
+#section-toolbar { font-size:11px; }
+#section-toolbar .tb-divider { width:1px; height:18px; background:#e5e7eb; margin:0 4px; flex:0 0 auto; }
+#section-toolbar .tb-group { display:inline-flex; align-items:center; gap:3px; padding:0 4px; border-left:1px solid #e5e7eb; flex:0 0 auto; }
+#section-toolbar .tb-group:first-of-type { border-left:none; }
+#section-toolbar .tb-label, #section-toolbar .tb-pct, #section-toolbar .tb-deg, #section-toolbar .tb-sep { color:#475569; font-size:10px; }
+#section-toolbar input[type="number"] { width:80px; padding:2px 4px; font-size:11px; border:1px solid #cbd5e1; border-radius:3px; text-align:right; background:#fff; }
+#section-toolbar input[type="number"]:disabled { background:#f1f5f9; color:#9ca3af; }
+#section-toolbar #tb-rotation { width:50px; }
+#section-toolbar #tb-opacity { width:50px; }
+#section-toolbar .tb-btn { font-size:11px; padding:2px 6px; border:1px solid #d1d5db; border-radius:3px; background:#fff; cursor:pointer; color:#475569; }
+#section-toolbar .tb-btn:hover { background:#eef2ff; color:#1d4ed8; }
+#section-toolbar .tb-btn.danger { color:#b91c1c; border-color:#fca5a5; }
+#section-toolbar .tb-btn.danger:hover { background:#fee2e2; color:#991b1b; }
+#section-toolbar .tb-btn:disabled { opacity:0.5; cursor:not-allowed; }
+#section-toolbar .tb-icon { font-size:11px; padding:1px 5px; border:1px solid #cbd5e1; border-radius:3px; background:#fff; cursor:pointer; color:#475569; }
+#section-toolbar .tb-icon:hover { background:#eef2ff; color:#1d4ed8; }
+#section-toolbar .sync-toggle { font-size:11px; padding:1px 4px; border:1px solid #cbd5e1; border-radius:3px; background:#fff; cursor:pointer; color:#94a3b8; line-height:1; }
+#section-toolbar .sync-toggle.linked { background:#dbeafe; color:#1d4ed8; border-color:#93c5fd; }
+#section-toolbar .sync-toggle:hover { background:#eef2ff; }
+.section-picker-btn { display:inline-flex; align-items:center; gap:4px; padding:2px 6px; border:1px solid #cbd5e1; border-radius:4px; background:#fff; cursor:pointer; color:#0f172a; font-size:11px; min-width:140px; }
+.section-picker-btn:hover { background:#eef2ff; }
+.section-picker-btn .picker-caret { color:#94a3b8; font-size:10px; margin-left:auto; }
+#section-picker-thumb { width:24px; height:24px; background:#1f2937; border-radius:2px; }
+.picker-menu { position:absolute; top:100%; left:0; z-index:30; margin-top:2px; background:#fff; border:1px solid #cbd5e1; border-radius:4px; box-shadow:0 4px 16px rgba(0,0,0,0.12); min-width:180px; max-height:300px; overflow:auto; padding:2px; }
+.picker-menu.hidden { display:none; }
+.picker-row { display:flex; align-items:center; gap:6px; padding:3px 6px; cursor:pointer; border-radius:3px; }
+.picker-row:hover { background:#eef2ff; }
+.picker-row.active { background:#dbeafe; }
+.picker-row canvas { width:32px; height:32px; background:#1f2937; border-radius:2px; flex-shrink:0; }
+.picker-row .picker-row-name { font-size:11px; color:#0f172a; }
+.canvas-label { position:absolute; top:4px; left:4px; background:rgba(0,0,0,0.55); color:#fff; font-size:11px; padding:2px 6px; border-radius:3px; z-index:4; pointer-events:none; }
+.sec-canvas-cell.active .canvas-label { background:rgba(37,99,235,0.85); }
 #method-rows .marker-swatch { width:14px; height:14px; border-radius:50%; border:1px solid #cbd5e1; cursor:pointer; padding:0; vertical-align:middle; }
 #method-rows .marker-swatch:hover { border-color:#1d4ed8; }
 #method-rows .marker-input { width:0; height:0; opacity:0; pointer-events:none; position:absolute; }
@@ -212,6 +245,42 @@ body.splitting-v { cursor:row-resize !important; }
                 <h2 class="text-sm font-semibold">Sections</h2>
                 <span class="text-[11px] text-gray-500" id="section-count">0 sections</span>
             </div>
+            <div id="section-toolbar" class="flex items-center gap-1 px-2 py-1 border-b shrink-0 overflow-x-auto bg-white">
+                <div id="section-picker-wrap" class="relative">
+                    <button id="section-picker" type="button" class="section-picker-btn" title="Switch which section the toolbar edits">
+                        <canvas id="section-picker-thumb" width="24" height="24"></canvas>
+                        <span id="section-picker-label">—</span>
+                        <span class="picker-caret">▾</span>
+                    </button>
+                    <div id="section-picker-menu" class="picker-menu hidden"></div>
+                </div>
+                <span class="tb-divider"></span>
+                <button class="tb-btn" id="tb-add-heif" title="Register HE or IF TIFF with transform JSON">+ HE/IF</button>
+                <button class="tb-btn" id="tb-add-msi" title="Register MSI xlsx or txt as a layer">+ MSI</button>
+                <button class="tb-btn danger" id="tb-del-section" title="Delete the active section">×</button>
+                <span class="tb-divider"></span>
+                <span class="tb-group">
+                    <span class="tb-label">Range:</span>
+                    <input type="number" id="tb-range-min" step="any" placeholder="min" disabled>
+                    <button type="button" class="sync-toggle" data-sync="vmin" title="Sync Min across sections">🔗</button>
+                    <span class="tb-sep">—</span>
+                    <input type="number" id="tb-range-max" step="any" placeholder="max" disabled>
+                    <button type="button" class="sync-toggle" data-sync="vmax" title="Sync Max across sections">🔗</button>
+                </span>
+                <span class="tb-group">
+                    <span class="tb-label">Op:</span>
+                    <input type="number" id="tb-opacity" step="1" min="0" max="100" disabled>
+                    <span class="tb-pct">%</span>
+                    <button type="button" class="sync-toggle" data-sync="opacity" title="Sync Opacity across sections">🔗</button>
+                </span>
+                <span class="tb-group">
+                    <span class="tb-label">Rot:</span>
+                    <input type="number" id="tb-rotation" step="1" min="-180" max="180" value="0" disabled>
+                    <span class="tb-deg">°</span>
+                    <button type="button" id="tb-rot-reset" class="tb-icon" title="Reset translate/rotate/zoom">↻</button>
+                    <button type="button" class="sync-toggle" data-sync="rot" title="Sync Rotation across sections">🔗</button>
+                </span>
+            </div>
             <div id="sections-grid" class="flex-1 min-h-0">
                 <!-- per-section panels are inserted here -->
             </div>
@@ -364,6 +433,17 @@ function rawToLum(raw, rawRange) {
 function formatRawValue(v) {
     if (!Number.isFinite(v)) return '—';
     if (Math.abs(v) >= 1000) return Math.round(v).toLocaleString();
+    if (Math.abs(v) >= 1) return v.toFixed(2);
+    return v.toFixed(4);
+}
+
+// Variant for <input type="number"> values: must be a parseable numeric
+// string. formatRawValue uses toLocaleString() once values cross 1000, which
+// inserts grouping commas; the browser's number input then refuses the value
+// and silently clears the field. This keeps the user-visible Method-table
+// formatter (formatRawValue) intact while feeding inputs a clean number.
+function formatRawForInput(v) {
+    if (!Number.isFinite(v)) return '';
     if (Math.abs(v) >= 1) return v.toFixed(2);
     return v.toFixed(4);
 }
@@ -928,147 +1008,15 @@ class SectionPanel {
         thumbsCell.dataset.sectionId = this.section.id;
         thumbsCell.addEventListener('click', () => App.setActiveSection(this.section.id));
 
-        const header = document.createElement('header');
-        const nameInp = document.createElement('input');
-        nameInp.className = 'sec-name';
-        nameInp.value = this.section.displayName || ('Section ' + (this.section.ordinal || ''));
-        nameInp.addEventListener('change', () => {
-            this.section.displayName = nameInp.value.trim() || ('Section ' + (this.section.ordinal || ''));
-            App.queueSave();
-            App.refreshAnalysisScope();
-        });
-        header.appendChild(nameInp);
-
-        const acts = document.createElement('div');
-        acts.className = 'sec-actions';
-        const mkBtn = (label, title, handler) => {
-            const b = document.createElement('button');
-            b.className = 'icon-btn';
-            b.textContent = label;
-            b.title = title;
-            b.addEventListener('click', (e) => { e.stopPropagation(); App.setActiveSection(this.section.id); handler(); });
-            return b;
-        };
-        acts.appendChild(mkBtn('+ HE/IF', 'Register HE or IF TIFF with transform JSON', () => Wizards.openHeIfWizard(this)));
-        acts.appendChild(mkBtn('+ MSI', 'Register MSI xlsx or txt as a layer', () => Wizards.openMsiWizard(this)));
-        acts.appendChild(mkBtn('×', 'Delete this section', () => {
-            if (!confirm('この切片を削除しますか?')) return;
-            App.deleteSection(this.section.id);
-        }));
-        header.appendChild(acts);
-
-        // Range editor (raw scale) for the currently active MSI layer. Each
-        // edge gets its own sync toggle so the user can lock just min while
-        // sweeping max independently across sections.
-        const rangeBox = document.createElement('div');
-        rangeBox.className = 'sec-range';
-        rangeBox.innerHTML =
-            '<span class="range-label">Range:</span>' +
-            '<input type="number" class="range-min" step="any" placeholder="min" disabled>' +
-            '<button type="button" class="sync-toggle sync-vmin" data-sync="vmin" title="Sync Min across sections">🔗</button>' +
-            '<span class="range-sep">—</span>' +
-            '<input type="number" class="range-max" step="any" placeholder="max" disabled>' +
-            '<button type="button" class="sync-toggle sync-vmax" data-sync="vmax" title="Sync Max across sections">🔗</button>';
-        rangeBox.addEventListener('click', (e) => e.stopPropagation());
-        header.appendChild(rangeBox);
-        this._wireSyncToggle(rangeBox.querySelector('.sync-vmin'), 'vmin');
-        this._wireSyncToggle(rangeBox.querySelector('.sync-vmax'), 'vmax');
-
-        // Opacity (0-100 %) for the active MSI layer. Numeric input matches
-        // the Range/Rot styling so all three live as a tight cluster.
-        const opcBox = document.createElement('div');
-        opcBox.className = 'sec-opc';
-        opcBox.innerHTML =
-            '<span class="opc-label">Op:</span>' +
-            '<input type="number" class="opc-input" step="1" min="0" max="100" disabled>' +
-            '<span class="opc-pct">%</span>' +
-            '<button type="button" class="sync-toggle sync-opacity" data-sync="opacity" title="Sync Opacity across sections">🔗</button>';
-        opcBox.addEventListener('click', (e) => e.stopPropagation());
-        header.appendChild(opcBox);
-        this._wireSyncToggle(opcBox.querySelector('.sync-opacity'), 'opacity');
-        const opcInp = opcBox.querySelector('.opc-input');
-        opcInp.addEventListener('change', () => {
-            const key = this.effectiveActiveMsiKey();
-            const settings = key ? this.imageSettings[key] : null;
-            if (!settings) return;
-            let v = parseFloat(opcInp.value);
-            if (!Number.isFinite(v)) v = 100;
-            v = Math.max(0, Math.min(100, Math.round(v)));
-            settings.opacity = v / 100;
-            opcInp.value = String(v);
-            this.renderComposite();
-            App.queueSave();
-            App.broadcastSync('opacity', v, this);
-        });
-        this._pendingOpcInput = opcInp;
-        this._pendingOpcBox = opcBox;
-
-        // Rotation (degrees) + Reset transform — translate/scale are wired
-        // through pointer drag and wheel events on the viewer-host below.
-        const rotBox = document.createElement('div');
-        rotBox.className = 'sec-rot';
-        rotBox.innerHTML =
-            '<span class="rot-label">Rot:</span>' +
-            '<input type="number" class="rot-input" step="1" min="-180" max="180" value="0">' +
-            '<span class="rot-deg">°</span>' +
-            '<button type="button" class="rot-reset" title="Reset translate/rotate/zoom">↻</button>' +
-            '<button type="button" class="sync-toggle sync-rot" data-sync="rot" title="Sync Rotation across sections">🔗</button>';
-        rotBox.addEventListener('click', (e) => e.stopPropagation());
-        header.appendChild(rotBox);
-        this._wireSyncToggle(rotBox.querySelector('.sync-rot'), 'rot');
-        const rotInp = rotBox.querySelector('.rot-input');
-        const rotReset = rotBox.querySelector('.rot-reset');
-        rotInp.addEventListener('change', () => {
-            const t = this._ensureViewerTransform();
-            let v = parseFloat(rotInp.value);
-            if (!Number.isFinite(v)) v = 0;
-            v = Math.max(-180, Math.min(180, v));
-            t.rot = v;
-            rotInp.value = String(v);
-            this.applyViewerTransform();
-            App.queueSave();
-            App.broadcastSync('rot', v, this);
-        });
-        rotReset.addEventListener('click', () => {
-            const t = this._ensureViewerTransform();
-            t.tx = 0; t.ty = 0; t.rot = 0; t.scale = 1;
-            rotInp.value = '0';
-            this.applyViewerTransform();
-            App.queueSave();
-        });
-        // (rotInp / rotBox added to this.dom below alongside the canvas refs)
-        this._pendingRotInput = rotInp;
-        this._pendingRotBox = rotBox;
-
-        canvasCell.appendChild(header);
-        const rangeMinInp = rangeBox.querySelector('.range-min');
-        const rangeMaxInp = rangeBox.querySelector('.range-max');
-        const onRangeChange = (edge) => {
-            const key = this.effectiveActiveMsiKey();
-            if (!key) return;
-            const settings = this.imageSettings[key];
-            if (!settings) return;
-            const ent = (this.section.msiSeries || {})[key] || {};
-            const rawRange = ent.rawRange || null;
-            const inp = edge === 'min' ? rangeMinInp : rangeMaxInp;
-            let lum = rawToLum(parseFloat(inp.value), rawRange);
-            if (!Number.isFinite(lum)) return;
-            lum = Math.max(0, Math.min(255, Math.round(lum)));
-            if (edge === 'min') {
-                if (lum >= settings.vmax) lum = settings.vmax - 1;
-                settings.vmin = lum;
-            } else {
-                if (lum <= settings.vmin) lum = settings.vmin + 1;
-                settings.vmax = lum;
-            }
-            this.renderComposite();
-            if (this.msiThumbRefs.has(key)) this.renderMsiThumbnail(key);
-            this.refreshRangeEditor();
-            if (App.activeSectionId === this.section.id) renderMethodTable();
-            App.broadcastSync(edge === 'min' ? 'vmin' : 'vmax', parseFloat(inp.value), this);
-        };
-        rangeMinInp.addEventListener('change', () => onRangeChange('min'));
-        rangeMaxInp.addEventListener('change', () => onRangeChange('max'));
+        // Section name overlay (top-left of each canvas cell). The full
+        // editor — Range / Op / Rot / +HE/IF / +MSI / × — lives in the
+        // shared #section-toolbar above the grid, so per-section headers
+        // are intentionally absent.
+        const label = document.createElement('div');
+        label.className = 'canvas-label';
+        label.textContent = this.section.displayName || ('Section ' + (this.section.ordinal || ''));
+        canvasCell.appendChild(label);
+        this._labelEl = label;
 
         const host = document.createElement('div');
         host.className = 'viewer-host';
@@ -1091,15 +1039,9 @@ class SectionPanel {
         root.appendChild(thumbsCell);
 
         this.dom = {
-            root, header, host, rot, cdisp, croi, acts, rangeBox,
-            rotInput: this._pendingRotInput, rotBox: this._pendingRotBox,
-            opcInput: this._pendingOpcInput, opcBox: this._pendingOpcBox,
-            canvasCell, thumbsCell, layerBar, thumbs,
+            root, host, rot, cdisp, croi,
+            canvasCell, thumbsCell, layerBar, thumbs, label,
         };
-        this._pendingRotInput = null;
-        this._pendingRotBox = null;
-        this._pendingOpcInput = null;
-        this._pendingOpcBox = null;
         this.displayCtx = cdisp.getContext('2d', { willReadFrequently: true });
         this.roiCtx = croi.getContext('2d');
 
@@ -1749,60 +1691,107 @@ class SectionPanel {
         return this.activeMsiKey;
     }
 
-    refreshRangeEditor() {
-        const box = this.dom && this.dom.rangeBox;
-        if (!box) return;
-        const minInp = box.querySelector('.range-min');
-        const maxInp = box.querySelector('.range-max');
+    // Returns the raw-scale display range and metadata that the shared
+    // Section toolbar needs to populate its Range inputs. Callers should
+    // treat the result as read-only.
+    getRangeState() {
         const key = this.effectiveActiveMsiKey();
         const settings = key ? this.imageSettings[key] : null;
-        if (!key || !settings) {
-            minInp.value = '';
-            maxInp.value = '';
-            minInp.disabled = true;
-            maxInp.disabled = true;
-            box.title = 'Select an MSI layer to edit its display range';
-            return;
-        }
+        if (!key || !settings) return { available: false };
         const ent = (this.section.msiSeries || {})[key] || {};
-        const rawRangeRaw = ent.rawRange;
-        // Normalize to a [min, max] pair of finite numbers, or null.
-        const rawRange = (Array.isArray(rawRangeRaw) && rawRangeRaw.length === 2 && Number.isFinite(rawRangeRaw[0]) && Number.isFinite(rawRangeRaw[1])) ? [Number(rawRangeRaw[0]), Number(rawRangeRaw[1])] : null;
+        const r = ent.rawRange;
+        const rawRange = (Array.isArray(r) && r.length === 2 && Number.isFinite(r[0]) && Number.isFinite(r[1])) ? [Number(r[0]), Number(r[1])] : null;
         const meta = ent.compoundMeta;
         const baseLabel = (meta && meta.base) || formatDisplayName(key);
-        minInp.disabled = false;
-        maxInp.disabled = false;
-        // Compute raw values for the current vmin/vmax. Fall back to the raw
-        // range endpoints (or the lum-scale settings.actualMin/Max) when the
-        // conversion yields a non-finite value, matching the Method table's
-        // direct rawRange[i] lookup so the two views stay consistent.
         let rawMin = rawRange ? lumToRaw(settings.vmin, rawRange) : Number(settings.vmin);
         let rawMax = rawRange ? lumToRaw(settings.vmax, rawRange) : Number(settings.vmax);
         if (!Number.isFinite(rawMin)) rawMin = rawRange ? rawRange[0] : Number(settings.actualMin);
         if (!Number.isFinite(rawMax)) rawMax = rawRange ? rawRange[1] : Number(settings.actualMax);
-        // Final guard: never let a non-finite value reach the number input,
-        // because '—' (formatRawValue's NaN sentinel) collapses it to blank.
         if (!Number.isFinite(rawMin)) rawMin = 0;
         if (!Number.isFinite(rawMax)) rawMax = Number.isFinite(rawMin) ? rawMin + 1 : 1;
-        minInp.value = formatRawValue(rawMin);
-        maxInp.value = formatRawValue(rawMax);
-        box.title = 'Display range for: ' + baseLabel;
-        this.refreshOpacityEditor();
+        return { available: true, key, baseLabel, rawMin, rawMax, rawRange };
     }
 
-    refreshOpacityEditor() {
-        const inp = this.dom && this.dom.opcInput;
-        if (!inp) return;
+    // Apply a raw-scale value coming from the toolbar Range input. Mirrors
+    // the old onRangeChange flow but is invoked by the Toolbar instead of
+    // the per-section header (which no longer exists).
+    applyRangeRaw(edge, rawValue) {
+        const key = this.effectiveActiveMsiKey();
+        if (!key) return;
+        const settings = this.imageSettings[key];
+        if (!settings) return;
+        const ent = (this.section.msiSeries || {})[key] || {};
+        const rawRange = ent.rawRange || null;
+        let lum = rawToLum(parseFloat(rawValue), rawRange);
+        if (!Number.isFinite(lum)) return;
+        lum = Math.max(0, Math.min(255, Math.round(lum)));
+        if (edge === 'min') {
+            if (lum >= settings.vmax) lum = settings.vmax - 1;
+            settings.vmin = lum;
+        } else {
+            if (lum <= settings.vmin) lum = settings.vmin + 1;
+            settings.vmax = lum;
+        }
+        this.renderComposite();
+        if (this.msiThumbRefs.has(key)) this.renderMsiThumbnail(key);
+        if (App.activeSectionId === this.section.id) renderMethodTable();
+        App.queueSave();
+        App.broadcastSync(edge === 'min' ? 'vmin' : 'vmax', parseFloat(rawValue), this);
+        Toolbar.refreshRange();
+    }
+
+    getOpacity() {
         const key = this.effectiveActiveMsiKey();
         const settings = key ? this.imageSettings[key] : null;
-        if (!settings) {
-            inp.value = '';
-            inp.disabled = true;
-            return;
-        }
-        inp.disabled = false;
-        inp.value = String(Math.round((settings.opacity != null ? settings.opacity : 1) * 100));
+        if (!settings) return { available: false };
+        return { available: true, value: Math.round((settings.opacity != null ? settings.opacity : 1) * 100) };
     }
+
+    applyOpacity(percent) {
+        const key = this.effectiveActiveMsiKey();
+        const settings = key ? this.imageSettings[key] : null;
+        if (!settings) return;
+        let v = parseFloat(percent);
+        if (!Number.isFinite(v)) v = 100;
+        v = Math.max(0, Math.min(100, Math.round(v)));
+        settings.opacity = v / 100;
+        this.renderComposite();
+        App.queueSave();
+        App.broadcastSync('opacity', v, this);
+        Toolbar.refreshOpacity();
+    }
+
+    getRotation() {
+        const t = this._ensureViewerTransform();
+        return Math.round(t.rot || 0);
+    }
+
+    applyRotation(deg) {
+        const t = this._ensureViewerTransform();
+        let v = parseFloat(deg);
+        if (!Number.isFinite(v)) v = 0;
+        v = Math.max(-180, Math.min(180, v));
+        t.rot = v;
+        this.applyViewerTransform();
+        App.queueSave();
+        App.broadcastSync('rot', v, this);
+        Toolbar.refreshRotation();
+    }
+
+    resetTransform() {
+        const t = this._ensureViewerTransform();
+        t.tx = 0; t.ty = 0; t.rot = 0; t.scale = 1;
+        this.applyViewerTransform();
+        App.queueSave();
+        Toolbar.refreshRotation();
+    }
+
+    // Backwards-compatible no-ops that simply ask the shared toolbar to
+    // re-read state from this panel. Existing call sites (loadAllLayers,
+    // toggleLayer, removeLayer, broadcastSync, etc.) keep invoking these
+    // names without caring where the editor lives.
+    refreshRangeEditor() { Toolbar.refreshRange(); Toolbar.refreshOpacity(); Toolbar.refreshRotation(); Toolbar.refreshSectionPicker(); }
+    refreshOpacityEditor() { Toolbar.refreshOpacity(); }
 
     removeLayer(key, skipConfirm) {
         if (!skipConfirm && !confirm('レイヤー "' + formatDisplayName(key) + '" を削除しますか?')) return;
@@ -1858,7 +1847,9 @@ class SectionPanel {
             rot.style.setProperty('--vt-rot', t.rot + 'deg');
             rot.style.setProperty('--vt-scale', String(t.scale));
         }
-        if (this.dom && this.dom.rotInput) this.dom.rotInput.value = String(Math.round(t.rot));
+        // Toolbar.refreshRotation reads getRotation() back from this panel
+        // when this section is active, so we don't write the input directly.
+        if (App.activeSectionId === this.section.id) Toolbar.refreshRotation();
     }
 
     // Drag (no modifier) translates the section content; wheel zooms it. ROI
@@ -1912,18 +1903,6 @@ class SectionPanel {
         }, { passive: false });
     }
 
-    // Wire a single sync toggle button. Clicking it flips App.syncFlags[name]
-    // so every section panel sees the same linked/unlinked state on next
-    // edit. Visual state is repainted across sections by App.setSyncFlag.
-    _wireSyncToggle(btn, name) {
-        if (!btn) return;
-        btn.classList.toggle('linked', !!App.syncFlags[name]);
-        btn.addEventListener('click', (ev) => {
-            ev.stopPropagation();
-            App.setSyncFlag(name, !App.syncFlags[name]);
-        });
-    }
-
     // Apply a value pushed in by App.broadcastSync from another section.
     applySyncedField(field, value) {
         if (field === 'rot') {
@@ -1944,10 +1923,9 @@ class SectionPanel {
             if (!Number.isFinite(v)) v = 100;
             v = Math.max(0, Math.min(100, Math.round(v)));
             settings.opacity = v / 100;
-            const inp = this.dom && this.dom.opcInput;
-            if (inp && document.activeElement !== inp) inp.value = String(v);
             this.renderComposite();
             App.queueSave();
+            if (App.activeSectionId === this.section.id) Toolbar.refreshOpacity();
             return;
         }
         if (field === 'vmin' || field === 'vmax') {
@@ -3561,6 +3539,224 @@ async function importZipFile(file) {
 // =============================================================
 // App - top-level state machine + event wiring
 // =============================================================
+// =============================================================
+// Shared Section toolbar — single editor that drives whichever
+// section App.activeSectionId points to. Replaces the per-panel
+// headers so multi-section comparisons don't repeat the same
+// controls N times.
+// =============================================================
+const Toolbar = {
+    el: null,
+    pickerBtn: null, pickerLabel: null, pickerThumb: null, pickerMenu: null,
+    rangeMin: null, rangeMax: null, opacityInp: null, rotationInp: null,
+    addHeIfBtn: null, addMsiBtn: null, delBtn: null, rotResetBtn: null,
+    syncButtons: null,
+    _menuOpen: false,
+    _wired: false,
+
+    activePanel() {
+        const id = App.activeSectionId;
+        return id ? App.panels.get(id) : null;
+    },
+
+    init() {
+        if (this._wired) return;
+        this._wired = true;
+        this.el = document.getElementById('section-toolbar');
+        if (!this.el) return;
+        this.pickerBtn = document.getElementById('section-picker');
+        this.pickerLabel = document.getElementById('section-picker-label');
+        this.pickerThumb = document.getElementById('section-picker-thumb');
+        this.pickerMenu = document.getElementById('section-picker-menu');
+        this.rangeMin = document.getElementById('tb-range-min');
+        this.rangeMax = document.getElementById('tb-range-max');
+        this.opacityInp = document.getElementById('tb-opacity');
+        this.rotationInp = document.getElementById('tb-rotation');
+        this.addHeIfBtn = document.getElementById('tb-add-heif');
+        this.addMsiBtn = document.getElementById('tb-add-msi');
+        this.delBtn = document.getElementById('tb-del-section');
+        this.rotResetBtn = document.getElementById('tb-rot-reset');
+        this.syncButtons = this.el.querySelectorAll('.sync-toggle');
+
+        this.pickerBtn.addEventListener('click', (ev) => { ev.stopPropagation(); this.togglePickerMenu(); });
+        document.addEventListener('mousedown', (ev) => {
+            if (!this._menuOpen) return;
+            if (this.pickerBtn.contains(ev.target) || this.pickerMenu.contains(ev.target)) return;
+            this.closePickerMenu();
+        });
+
+        this.addHeIfBtn.addEventListener('click', () => { const p = this.activePanel(); if (p) Wizards.openHeIfWizard(p); });
+        this.addMsiBtn.addEventListener('click',  () => { const p = this.activePanel(); if (p) Wizards.openMsiWizard(p); });
+        this.delBtn.addEventListener('click', () => {
+            const p = this.activePanel();
+            if (!p) return;
+            if (!confirm('この切片を削除しますか?')) return;
+            App.deleteSection(p.section.id);
+        });
+
+        this.rangeMin.addEventListener('change', () => { const p = this.activePanel(); if (p) p.applyRangeRaw('min', this.rangeMin.value); });
+        this.rangeMax.addEventListener('change', () => { const p = this.activePanel(); if (p) p.applyRangeRaw('max', this.rangeMax.value); });
+        this.opacityInp.addEventListener('change', () => { const p = this.activePanel(); if (p) p.applyOpacity(this.opacityInp.value); });
+        this.rotationInp.addEventListener('change', () => { const p = this.activePanel(); if (p) p.applyRotation(this.rotationInp.value); });
+        this.rotResetBtn.addEventListener('click', () => { const p = this.activePanel(); if (p) p.resetTransform(); });
+
+        this.syncButtons.forEach(btn => {
+            const name = btn.dataset.sync;
+            btn.classList.toggle('linked', !!App.syncFlags[name]);
+            btn.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                App.setSyncFlag(name, !App.syncFlags[name]);
+            });
+        });
+    },
+
+    togglePickerMenu() { this._menuOpen ? this.closePickerMenu() : this.openPickerMenu(); },
+    openPickerMenu() {
+        if (!this.pickerMenu) return;
+        this.refreshSectionPicker();
+        this.pickerMenu.classList.remove('hidden');
+        this._menuOpen = true;
+    },
+    closePickerMenu() {
+        if (!this.pickerMenu) return;
+        this.pickerMenu.classList.add('hidden');
+        this._menuOpen = false;
+    },
+
+    // Returns the canvas thumbnail data URL representing a section in the
+    // dropdown. Prefers the focus compound (Compound mode) or the active
+    // MSI layer; falls back to a solid dark tile.
+    _thumbDataUrlFor(panel) {
+        if (!panel) return null;
+        let key = null;
+        if (App.viewMode === 'compound' && App.focusCompoundKey && panel.imageSources[App.focusCompoundKey]) {
+            key = App.focusCompoundKey;
+        } else {
+            key = panel.activeMsiKey || panel.fallbackActiveMsiKey() || null;
+            if (!key) {
+                const msiKeys = Object.keys(panel.imageSources || {}).filter(k => /^MSI_/i.test(k));
+                key = msiKeys[0] || null;
+            }
+        }
+        if (!key) return null;
+        return panel.imageDataUrls && panel.imageDataUrls[key] ? panel.imageDataUrls[key] : null;
+    },
+
+    _drawThumbInto(canvas, panel) {
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#1f2937';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        const url = this._thumbDataUrlFor(panel);
+        if (!url) return;
+        const img = new Image();
+        img.onload = () => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            // Fit, preserving aspect ratio
+            const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
+            const w = img.width * scale, h = img.height * scale;
+            const x = (canvas.width - w) / 2, y = (canvas.height - h) / 2;
+            ctx.drawImage(img, x, y, w, h);
+        };
+        img.src = url;
+    },
+
+    refreshSectionPicker() {
+        if (!this.pickerBtn) return;
+        const project = App.project;
+        const sections = (project && project.sections) || [];
+        const activeId = App.activeSectionId;
+        const activePanel = this.activePanel();
+        const activeSection = activePanel ? activePanel.section : null;
+        if (this.pickerLabel) this.pickerLabel.textContent = activeSection ? (activeSection.displayName || ('Section ' + (activeSection.ordinal || ''))) : '—';
+        if (this.pickerThumb) this._drawThumbInto(this.pickerThumb, activePanel);
+
+        if (this.pickerMenu) {
+            this.pickerMenu.innerHTML = '';
+            for (const s of sections) {
+                const panel = App.panels.get(s.id);
+                const row = document.createElement('div');
+                row.className = 'picker-row' + (s.id === activeId ? ' active' : '');
+                const tc = document.createElement('canvas');
+                tc.width = 32; tc.height = 32;
+                this._drawThumbInto(tc, panel);
+                row.appendChild(tc);
+                const nm = document.createElement('span');
+                nm.className = 'picker-row-name';
+                nm.textContent = s.displayName || ('Section ' + (s.ordinal || ''));
+                row.appendChild(nm);
+                row.addEventListener('click', () => {
+                    App.setActiveSection(s.id);
+                    this.closePickerMenu();
+                });
+                this.pickerMenu.appendChild(row);
+            }
+            if (!sections.length) {
+                const empty = document.createElement('div');
+                empty.style.cssText = 'padding:6px 8px;color:#94a3b8;font-size:11px;';
+                empty.textContent = '(no sections)';
+                this.pickerMenu.appendChild(empty);
+            }
+        }
+        // Enable/disable action buttons based on active section availability.
+        const has = !!activePanel;
+        if (this.addHeIfBtn) this.addHeIfBtn.disabled = !has;
+        if (this.addMsiBtn) this.addMsiBtn.disabled = !has;
+        if (this.delBtn) this.delBtn.disabled = !has;
+    },
+
+    refreshRange() {
+        if (!this.rangeMin || !this.rangeMax) return;
+        const p = this.activePanel();
+        const st = p ? p.getRangeState() : null;
+        if (!p || !st || !st.available) {
+            this.rangeMin.value = ''; this.rangeMax.value = '';
+            this.rangeMin.disabled = true; this.rangeMax.disabled = true;
+            return;
+        }
+        this.rangeMin.disabled = false; this.rangeMax.disabled = false;
+        if (document.activeElement !== this.rangeMin) this.rangeMin.value = formatRawForInput(st.rawMin);
+        if (document.activeElement !== this.rangeMax) this.rangeMax.value = formatRawForInput(st.rawMax);
+        this.rangeMin.title = 'Display min for: ' + st.baseLabel;
+        this.rangeMax.title = 'Display max for: ' + st.baseLabel;
+    },
+
+    refreshOpacity() {
+        if (!this.opacityInp) return;
+        const p = this.activePanel();
+        const op = p ? p.getOpacity() : null;
+        if (!p || !op || !op.available) {
+            this.opacityInp.value = ''; this.opacityInp.disabled = true;
+            return;
+        }
+        this.opacityInp.disabled = false;
+        if (document.activeElement !== this.opacityInp) this.opacityInp.value = String(op.value);
+    },
+
+    refreshRotation() {
+        if (!this.rotationInp) return;
+        const p = this.activePanel();
+        if (!p) {
+            this.rotationInp.value = '0'; this.rotationInp.disabled = true;
+            if (this.rotResetBtn) this.rotResetBtn.disabled = true;
+            return;
+        }
+        this.rotationInp.disabled = false;
+        if (this.rotResetBtn) this.rotResetBtn.disabled = false;
+        if (document.activeElement !== this.rotationInp) this.rotationInp.value = String(p.getRotation());
+    },
+
+    refreshAll() {
+        this.refreshSectionPicker();
+        this.refreshRange();
+        this.refreshOpacity();
+        this.refreshRotation();
+    },
+};
+
 const App = {
     project: null,
     panels: new Map(),       // sectionId -> SectionPanel
@@ -3643,22 +3839,20 @@ const App = {
         for (const p of this.panels.values()) {
             try {
                 p.renderComposite();
-                p.refreshRangeEditor();
                 p.refreshActiveOutline && p.refreshActiveOutline();
             } catch (e) {}
         }
+        Toolbar.refreshAll();
     },
 
     setFocusCompoundKey(key) {
         this.focusCompoundKey = key || null;
         try { localStorage.setItem('desi:focusCompoundKey', this.focusCompoundKey || ''); } catch (e) {}
         for (const p of this.panels.values()) {
-            try {
-                p.renderComposite();
-                p.refreshRangeEditor();
-            } catch (e) {}
+            try { p.renderComposite(); } catch (e) {}
         }
         renderMethodTable();
+        Toolbar.refreshAll();
     },
 
     refreshViewModeUI() {
@@ -3708,6 +3902,7 @@ const App = {
     async init() {
         await ProjectStorage.open();
         setupSplitters();
+        Toolbar.init();
         this.loadSyncFlags();
         try {
             const m = localStorage.getItem('desi:viewMode');
@@ -3882,13 +4077,18 @@ const App = {
         }
         document.getElementById('section-count').textContent = this.project.sections.length + ' sections';
         document.getElementById('sections-empty').classList.toggle('hidden', this.project.sections.length > 0);
+        // The shared splitter is a child of #sections-grid; it gets wiped by
+        // innerHTML='' above so we recreate it after the panels are in place.
+        this.setupGlobalSectionSplitter();
         if (this.project.sections[0]) this.setActiveSection(this.project.sections[0].id);
+        else Toolbar.refreshAll();
     },
 
     setActiveSection(id) {
         this.activeSectionId = id;
         this.panels.forEach(p => p.setActive(p.section.id === id));
         renderMethodTable();
+        Toolbar.refreshAll();
     },
 
     refreshAnalysisScope() {
