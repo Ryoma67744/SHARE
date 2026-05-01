@@ -12,6 +12,8 @@
     <script src="https://cdn.jsdelivr.net/npm/utif@3.1.0/UTIF.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
 <script>
   window.SUPABASE_URL     = "https://pxlrlhtcvwkqnlryencs.supabase.co";
   window.SUPABASE_ANON_KEY = "sb_publishable_2K4sqMmKk3g20Jmwho-awQ_Uu_hSKeU";
@@ -54,6 +56,23 @@ body.share-mode .picker-row .picker-row-rename { display:none !important; }
 .modal-card .actions { display:flex; gap:6px; justify-content:flex-end; margin-top:14px; }
 .modal-card .err { color:#b91c1c; font-size:11px; min-height:1em; margin-top:6px; }
 .modal-card .field-row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.modal-card.help-card { width:880px; max-width:96vw; max-height:90vh; padding:18px 24px; }
+.help-body { font-size:13px; line-height:1.65; color:#1f2937; }
+.help-body h1 { font-size:18px; font-weight:700; margin:18px 0 10px; color:#0f172a; border-bottom:1px solid #e2e8f0; padding-bottom:6px; }
+.help-body h2 { font-size:15px; font-weight:600; margin:18px 0 8px; color:#0f172a; }
+.help-body h3 { font-size:13px; font-weight:600; margin:14px 0 6px; color:#1e293b; }
+.help-body p  { margin:6px 0; }
+.help-body ul, .help-body ol { padding-left:1.5em; margin:6px 0; }
+.help-body li { margin:2px 0; }
+.help-body code { background:#f1f5f9; padding:1px 4px; border-radius:3px; font-size:12px; font-family:ui-monospace, SFMono-Regular, monospace; }
+.help-body pre { background:#0f172a; color:#e2e8f0; padding:10px 12px; border-radius:5px; overflow-x:auto; font-size:12px; }
+.help-body pre code { background:transparent; color:inherit; padding:0; }
+.help-body table { border-collapse:collapse; margin:8px 0; font-size:12px; }
+.help-body th, .help-body td { border:1px solid #cbd5e1; padding:4px 8px; text-align:left; }
+.help-body th { background:#f1f5f9; }
+.help-body blockquote { border-left:3px solid #94a3b8; padding:2px 10px; color:#475569; background:#f8fafc; margin:8px 0; }
+.help-body a { color:#2563eb; text-decoration:underline; }
+.help-body hr { border:none; border-top:1px solid #e2e8f0; margin:14px 0; }
 /* SectionPanel is a logical wrapper only — its real children (canvas-cell
    and thumbs-cell) live directly in the #sections-grid grid so that all
    sections share canvas row 1 and thumbnail row 2. */
@@ -178,8 +197,10 @@ body.splitting-v { cursor:row-resize !important; }
 .toast { background:#0f172a; color:#fff; padding:6px 14px; font-size:12px; border-radius:9999px; opacity:0.92; }
 #method-rows tr.method-row { cursor:pointer; }
 #method-rows tr.method-row:hover { background:#f1f5f9; }
-#method-rows tr.method-row.active { background:#dbeafe; }
-#method-rows tr.method-row.focus { background:#bfdbfe; outline:1px solid #2563eb; }
+/* .active / .focus retain meaning in JS but no longer paint a persistent
+   blue background (per user request). Hover feedback above is preserved. */
+#method-rows tr.method-row.active,
+#method-rows tr.method-row.focus { background:transparent; outline:none; }
 #view-mode-toggle button { line-height:1; }
 #view-mode-toggle button:not(:last-child) { border-right:1px solid #e5e7eb; }
 #method-rows tr.method-row .range-input { width:64px; padding:1px 3px; border:1px solid #cbd5e1; border-radius:3px; font-size:10px; text-align:right; background:#fff; }
@@ -210,6 +231,7 @@ body.splitting-v { cursor:row-resize !important; }
             <button id="btn-share-info" class="btn" title="View the share URL and passwords from the last publish" style="display:none;">Share info</button>
             <button id="btn-add-section" class="btn primary" title="Add a tissue section panel">+ Section</button>
             <button id="btn-delete-project" class="btn danger" title="Delete current project">Delete</button>
+            <button id="btn-help" class="btn" title="Open the user guide">Help</button>
         </div>
     </header>
 
@@ -3643,6 +3665,52 @@ async function openPublishMetaModal(project) {
     return p;
 }
 
+// Fetch USER_GUIDE.md from the repository root, render it with marked,
+// sanitise with DOMPurify and show inside a wide modal. Cached after the
+// first successful fetch so the network round-trip happens only once.
+let _helpMarkdownCache = null;
+async function openHelpModal() {
+    let md = _helpMarkdownCache;
+    if (md == null) {
+        // The viewer is served from /<repo>/viewer/, the guide from /<repo>/.
+        // The relative path below works on both GitHub Pages and the local
+        // file:// case.
+        try {
+            const resp = await fetch('../USER_GUIDE.md', { cache: 'no-cache' });
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            md = await resp.text();
+            _helpMarkdownCache = md;
+        } catch (e) {
+            console.error('Help fetch failed', e);
+            const html = `
+                <h2>Help を取得できませんでした</h2>
+                <p style="font-size:12px;color:#475569;">USER_GUIDE.md の取得に失敗しました (${String(e.message || e)})。</p>
+                <p style="font-size:12px;color:#475569;">代わりに <a href="../USER_GUIDE.md" target="_blank" rel="noopener">こちらから直接ダウンロード</a>してご覧ください。</p>
+                <div class="modal-actions"><button type="button" class="btn primary" data-modal-cancel>Close</button></div>`;
+            return openModal(html);
+        }
+    }
+    let bodyHtml;
+    try {
+        const raw = (typeof marked !== 'undefined') ? marked.parse(md) : md;
+        bodyHtml = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(raw) : raw;
+    } catch (e) {
+        console.error('Markdown render failed', e);
+        bodyHtml = '<pre>' + String(md).replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</pre>';
+    }
+    const html = `
+        <h2>DESI Data Share — User Guide</h2>
+        <div class="help-body">${bodyHtml}</div>
+        <div class="modal-actions" style="position:sticky;bottom:0;background:#fff;padding-top:8px;">
+          <a class="btn" href="../USER_GUIDE.md" target="_blank" rel="noopener">新しいタブで開く</a>
+          <button type="button" class="btn primary" data-modal-cancel>Close</button>
+        </div>`;
+    const p = openModal(html);
+    // Widen the card. openModal._card is the just-created card element.
+    if (openModal._card) openModal._card.classList.add('help-card');
+    return p;
+}
+
 // Display the share URL + viewer/admin passwords stored on the project.
 // Used both immediately after a successful Publish and later via the
 // "Share info" button, so the master can always retrieve the credentials
@@ -4811,6 +4879,8 @@ const App = {
             if (!this.project || !this.project.shareInfo) return;
             openShareInfoModal(this.project.shareInfo);
         });
+        const helpBtn = document.getElementById('btn-help');
+        if (helpBtn) helpBtn.addEventListener('click', () => { openHelpModal().catch(e => console.error(e)); });
         document.getElementById('btn-import-zip').addEventListener('click', () => document.getElementById('hidden-import-input').click());
         document.getElementById('hidden-import-input').addEventListener('change', async (e) => {
             const f = e.target.files[0];
