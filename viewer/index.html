@@ -35,6 +35,7 @@ body.share-mode #btn-import-zip,
 body.share-mode #btn-add-section,
 body.share-mode #btn-delete-project,
 body.share-mode #btn-publish-share,
+body.share-mode #btn-share-info,
 body.share-mode .project-picker-wrap,
 body.share-mode #project-name-input,
 body.share-mode #tb-add-heif,
@@ -206,6 +207,7 @@ body.splitting-v { cursor:row-resize !important; }
             <button id="btn-import-zip" class="btn">Import ZIP</button>
             <button id="btn-export-zip" class="btn">Export ZIP</button>
             <button id="btn-publish-share" class="btn" title="Upload this project to Supabase and get a shareable URL">Publish to share</button>
+            <button id="btn-share-info" class="btn" title="View the share URL and passwords from the last publish" style="display:none;">Share info</button>
             <button id="btn-add-section" class="btn primary" title="Add a tissue section panel">+ Section</button>
             <button id="btn-delete-project" class="btn danger" title="Delete current project">Delete</button>
         </div>
@@ -3585,7 +3587,19 @@ async function publishProjectToShare() {
             throw new Error(result && result.reason ? result.reason : 'upsert_failed');
         }
         const url = `${location.origin}${location.pathname}#share=${encodeURIComponent(meta.slug)}`;
-        await openPublishResultModal(url, meta.slug);
+        // Persist the share metadata locally so the master can re-open it
+        // any time via the "Share info" button. Stored only in the local
+        // IndexedDB project record — it never leaves this browser.
+        project.shareInfo = {
+            slug: meta.slug,
+            viewerPassword: meta.viewerPassword,
+            adminPassword: meta.adminPassword || null,
+            url,
+            publishedAt: nowIso(),
+        };
+        try { await ProjectStorage.putProject(project); } catch (e) { console.warn('persist shareInfo failed', e); }
+        App.refreshShareInfoButton();
+        await openShareInfoModal(project.shareInfo, { titleSuccess: true });
     } catch (e) {
         console.error('publish failed', e);
         alert('Publish に失敗しました: ' + (e.message || e));
@@ -3629,30 +3643,84 @@ async function openPublishMetaModal(project) {
     return p;
 }
 
-function openPublishResultModal(url, slug) {
-    const safe = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+// Display the share URL + viewer/admin passwords stored on the project.
+// Used both immediately after a successful Publish and later via the
+// "Share info" button, so the master can always retrieve the credentials
+// they distributed.
+function openShareInfoModal(info, opts) {
+    const safe = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+    const o = opts || {};
+    const title = o.titleSuccess ? 'Share URL を発行しました' : 'Share info';
+    const intro = o.titleSuccess
+        ? '下記 URL を共同研究者に渡してください。viewer password も別途共有が必要です。'
+        : '直近の Publish で発行された URL とパスワードです。';
+    const ts = info.publishedAt ? new Date(info.publishedAt).toLocaleString() : '';
+    const adminRow = info.adminPassword ? `
+            <label style="margin-top:6px;">Admin password
+              <div style="display:flex;gap:4px;">
+                <input type="password" readonly value="${safe(info.adminPassword)}" data-admin-pw style="flex:1;padding:6px;font-size:12px;border:1px solid #cbd5e1;border-radius:3px;background:#f8fafc;">
+                <button type="button" class="btn" data-toggle-admin>表示</button>
+                <button type="button" class="btn" data-copy-admin>Copy</button>
+              </div>
+            </label>` : '';
     const html = `
-        <h2>Share URL を発行しました</h2>
-        <p style="font-size:12px;color:#1f2937;">下記 URL を共同研究者に渡してください。viewer password も別途共有が必要です。</p>
-        <input type="text" readonly value="${safe(url)}" style="width:100%;padding:6px;font-size:12px;border:1px solid #cbd5e1;border-radius:3px;background:#f8fafc;" data-share-url>
+        <h2>${safe(title)}</h2>
+        <p style="font-size:12px;color:#1f2937;">${safe(intro)}</p>
+        <label>Share URL
+          <div style="display:flex;gap:4px;">
+            <input type="text" readonly value="${safe(info.url)}" data-share-url style="flex:1;padding:6px;font-size:12px;border:1px solid #cbd5e1;border-radius:3px;background:#f8fafc;">
+            <button type="button" class="btn" data-copy-url>Copy</button>
+          </div>
+        </label>
+        <label style="margin-top:6px;">Slug
+          <input type="text" readonly value="${safe(info.slug)}" style="width:100%;padding:6px;font-size:12px;border:1px solid #cbd5e1;border-radius:3px;background:#f8fafc;">
+        </label>
+        <label style="margin-top:6px;">Viewer password
+          <div style="display:flex;gap:4px;">
+            <input type="password" readonly value="${safe(info.viewerPassword)}" data-viewer-pw style="flex:1;padding:6px;font-size:12px;border:1px solid #cbd5e1;border-radius:3px;background:#f8fafc;">
+            <button type="button" class="btn" data-toggle-viewer>表示</button>
+            <button type="button" class="btn" data-copy-viewer>Copy</button>
+          </div>
+        </label>
+        ${adminRow}
+        ${ts ? `<p style="font-size:11px;color:#64748b;margin-top:8px;">Published: ${safe(ts)}</p>` : ''}
+        <p style="font-size:11px;color:#475569;">※ パスワードはこのブラウザのローカル DB にのみ保存されます。</p>
         <div class="modal-actions">
-          <button type="button" class="btn" data-copy-url>Copy URL</button>
           <button type="button" class="btn primary" data-modal-cancel>Close</button>
         </div>`;
     const p = openModal(html);
     const card = openModal._card;
-    const copyBtn = card.querySelector('[data-copy-url]');
-    const inp = card.querySelector('[data-share-url]');
-    copyBtn.addEventListener('click', async () => {
-        try {
-            inp.select();
-            await navigator.clipboard.writeText(url);
-            copyBtn.textContent = 'Copied ✓';
-        } catch (e) {
-            inp.select(); document.execCommand('copy');
-            copyBtn.textContent = 'Copied ✓';
-        }
-    });
+    const wireToggle = (btnSel, inpSel) => {
+        const btn = card.querySelector(btnSel); const inp = card.querySelector(inpSel);
+        if (!btn || !inp) return;
+        btn.addEventListener('click', () => {
+            const showing = inp.type === 'text';
+            inp.type = showing ? 'password' : 'text';
+            btn.textContent = showing ? '表示' : '隠す';
+        });
+    };
+    const wireCopy = (btnSel, value) => {
+        const btn = card.querySelector(btnSel);
+        if (!btn) return;
+        btn.addEventListener('click', async () => {
+            try { await navigator.clipboard.writeText(value); }
+            catch (e) {
+                const ta = document.createElement('textarea');
+                ta.value = value; document.body.appendChild(ta);
+                ta.select(); document.execCommand('copy'); ta.remove();
+            }
+            const orig = btn.textContent;
+            btn.textContent = 'Copied ✓';
+            setTimeout(() => { btn.textContent = orig; }, 1200);
+        });
+    };
+    wireCopy('[data-copy-url]', info.url || '');
+    wireCopy('[data-copy-viewer]', info.viewerPassword || '');
+    wireToggle('[data-toggle-viewer]', '[data-viewer-pw]');
+    if (info.adminPassword) {
+        wireCopy('[data-copy-admin]', info.adminPassword);
+        wireToggle('[data-toggle-admin]', '[data-admin-pw]');
+    }
     return p;
 }
 
@@ -4382,6 +4450,7 @@ const App = {
         if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="px-2 py-2 text-center text-gray-400">No project</td></tr>';
         renderMemoForm();
         this.refreshAnalysisScope();
+        this.refreshShareInfoButton();
     },
 
     async refreshProjectPicker() {
@@ -4427,7 +4496,15 @@ const App = {
         this.refreshAnalysisScope();
         renderMemoForm();
         await this.refreshProjectPicker();
+        this.refreshShareInfoButton();
         this.renderAnalysis();
+    },
+
+    refreshShareInfoButton() {
+        const btn = document.getElementById('btn-share-info');
+        if (!btn) return;
+        const has = !!(this.project && this.project.shareInfo && this.project.shareInfo.url);
+        btn.style.display = has ? '' : 'none';
     },
 
     async createNewProject(name) {
@@ -4716,6 +4793,11 @@ const App = {
         document.getElementById('btn-export-zip').addEventListener('click', () => exportProjectAsZip());
         const publishBtn = document.getElementById('btn-publish-share');
         if (publishBtn) publishBtn.addEventListener('click', () => publishProjectToShare());
+        const shareInfoBtn = document.getElementById('btn-share-info');
+        if (shareInfoBtn) shareInfoBtn.addEventListener('click', () => {
+            if (!this.project || !this.project.shareInfo) return;
+            openShareInfoModal(this.project.shareInfo);
+        });
         document.getElementById('btn-import-zip').addEventListener('click', () => document.getElementById('hidden-import-input').click());
         document.getElementById('hidden-import-input').addEventListener('change', async (e) => {
             const f = e.target.files[0];
