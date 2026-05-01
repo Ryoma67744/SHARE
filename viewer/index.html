@@ -33,6 +33,7 @@ body { font-family: 'Inter', sans-serif; background-color: #f4f4f5; }
    skeleton (sections / files / memo). Per-layer ROI editing remains
    available but is gated by an exclusive lock at the JS layer. */
 body.share-mode #btn-new-project,
+body.share-mode #btn-projects,
 body.share-mode #btn-import-zip,
 body.share-mode #btn-add-section,
 body.share-mode #btn-delete-project,
@@ -238,6 +239,7 @@ body.share-mode .thumb-file-group .file-actions [data-action="delete-file"] { di
                 <button data-mode="free" class="px-2 py-1 bg-white text-gray-700">Free</button>
                 <button data-mode="compound" class="px-2 py-1 bg-blue-600 text-white">Compound</button>
             </div>
+            <button id="btn-projects" class="btn" title="Manage local + server-side projects">Projects</button>
             <button id="btn-new-project" class="btn">New</button>
             <button id="btn-import-zip" class="btn">Import ZIP</button>
             <button id="btn-export-zip" class="btn">Export ZIP</button>
@@ -389,10 +391,11 @@ body.share-mode .thumb-file-group .file-actions [data-action="delete-file"] { di
                     <summary class="text-[11px] font-semibold text-gray-600 px-2 py-1 cursor-pointer select-none bg-gray-50 rounded-t">Memo</summary>
                     <div class="p-2 space-y-1.5 text-[11px]">
                         <div class="flex items-center gap-2"><span class="w-24 shrink-0 text-gray-500">Sample</span><input id="memo-sample" type="text" class="flex-1 border border-gray-200 rounded px-1.5 py-0.5 text-[11px]"></div>
-                        <div class="flex items-center gap-2"><span class="w-24 shrink-0 text-gray-500">Machine</span><select id="memo-machine" class="flex-1 border border-gray-200 rounded px-1.5 py-0.5 text-[11px] bg-white"><option value="DESI">DESI</option><option value="TIMS">TIMS</option><option value="LTQ">LTQ</option></select></div>
+                        <div class="flex items-center gap-2"><span class="w-24 shrink-0 text-gray-500">Experiment date</span><input id="memo-experiment-date" type="date" class="flex-1 border border-gray-200 rounded px-1.5 py-0.5 text-[11px]"></div>
+                        <div class="flex items-center gap-2"><span class="w-24 shrink-0 text-gray-500">Machine</span><select id="memo-machine" class="flex-1 border border-gray-200 rounded px-1.5 py-0.5 text-[11px] bg-white"><option value="DESI">DESI</option><option value="TIMS">TIMS</option><option value="LTQ">LTQ</option><option value="Other">Other</option></select></div>
+                        <div class="flex items-center gap-2 memo-row-matrix"><span class="w-24 shrink-0 text-gray-500">Matrix</span><input id="memo-matrix" type="text" class="flex-1 border border-gray-200 rounded px-1.5 py-0.5 text-[11px]"></div>
                         <div class="flex items-center gap-2"><span class="w-24 shrink-0 text-gray-500">Google Keep</span><input id="memo-google-keep" type="text" placeholder="https://keep.google.com/..." class="flex-1 border border-gray-200 rounded px-1.5 py-0.5 text-[11px]"></div>
-                        <div class="flex items-start gap-2"><span class="w-24 shrink-0 text-gray-500 mt-1">+α</span><textarea id="memo-free" rows="3" class="flex-1 border border-gray-200 rounded px-1.5 py-1 text-[11px] resize-y" placeholder="自由記述"></textarea></div>
-                        <div class="flex items-center gap-2"><span class="w-24 shrink-0 text-gray-500">Matrix</span><input id="memo-matrix" type="text" class="flex-1 border border-gray-200 rounded px-1.5 py-0.5 text-[11px]"></div>
+                        <div class="flex items-start gap-2"><span class="w-24 shrink-0 text-gray-500 mt-1">Memo</span><textarea id="memo-free" rows="3" class="flex-1 border border-gray-200 rounded px-1.5 py-1 text-[11px] resize-y" placeholder="自由記述"></textarea></div>
                         <div class="flex items-center gap-2"><span class="w-24 shrink-0 text-gray-500">Derivatization</span><input id="memo-derivatization" type="text" class="flex-1 border border-gray-200 rounded px-1.5 py-0.5 text-[11px]"></div>
                     </div>
                 </details>
@@ -2718,6 +2721,7 @@ function ensureMemoShape(memo) {
     const m = memo && typeof memo === 'object' ? memo : {};
     return {
         sample: m.sample || '',
+        experimentDate: m.experimentDate || '',
         machine: m.machine || 'DESI',
         googleKeep: m.googleKeep || '',
         freeNote: m.freeNote || '',
@@ -2731,6 +2735,7 @@ function renderMemoForm() {
     const memo = project ? (project.memo = ensureMemoShape(project.memo)) : ensureMemoShape();
     const ids = [
         ['memo-sample', 'sample'],
+        ['memo-experiment-date', 'experimentDate'],
         ['memo-machine', 'machine'],
         ['memo-google-keep', 'googleKeep'],
         ['memo-free', 'freeNote'],
@@ -2744,6 +2749,14 @@ function renderMemoForm() {
         // Share-Only viewers can read the memo but not edit it.
         el.disabled = !project || !!App.shareMode;
     }
+    // Matrix is only meaningful for non-DESI machines (TIMS / LTQ / Other).
+    refreshMatrixVisibility(memo.machine);
+}
+
+function refreshMatrixVisibility(machine) {
+    const row = document.querySelector('.memo-row-matrix');
+    if (!row) return;
+    row.style.display = (machine && machine !== 'DESI') ? '' : 'none';
 }
 
 // Wire up the 4 layout splitters (left/right side widths, ROI/Method height,
@@ -3975,6 +3988,272 @@ function openShareInfoModal(info, opts) {
     return p;
 }
 
+// ---------------------------------------------------------------------------
+// Project management modal: lists local + server-side projects, lets the
+// master open / copy share URL / delete, and create new projects with all
+// the metadata up-front (name, experiment date, machine, matrix, Google
+// Keep, memo).
+// ---------------------------------------------------------------------------
+
+function _ownerPwCacheKey() { return 'desi:ownerPw'; }
+
+function _readCachedOwnerPw() {
+    try {
+        const raw = sessionStorage.getItem(_ownerPwCacheKey());
+        if (!raw) return '';
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.expiresAt && Date.now() < parsed.expiresAt) return parsed.pw || '';
+    } catch (e) {}
+    return '';
+}
+
+function _saveCachedOwnerPw(pw) {
+    try {
+        sessionStorage.setItem(_ownerPwCacheKey(), JSON.stringify({
+            pw,
+            expiresAt: Date.now() + 12 * 60 * 60 * 1000,
+        }));
+    } catch (e) {}
+}
+
+async function openNewProjectFormModal(initial) {
+    const safe = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+    const i = initial || {};
+    const html = `
+        <h2>新規プロジェクト</h2>
+        <form>
+          <label>プロジェクト名
+            <input type="text" name="name" value="${safe(i.name || '')}" required>
+          </label>
+          <label>実験日時
+            <input type="date" name="experiment_date" value="${safe(i.experimentDate || '')}">
+          </label>
+          <label>装置
+            <select name="machine">
+              <option value="DESI">DESI</option>
+              <option value="TIMS">TIMS</option>
+              <option value="LTQ">LTQ</option>
+              <option value="Other">Other</option>
+            </select>
+          </label>
+          <label data-matrix-row>Matrix
+            <input type="text" name="matrix" value="${safe(i.matrix || '')}">
+          </label>
+          <label>Google Keep
+            <input type="text" name="google_keep" value="${safe(i.googleKeep || '')}" placeholder="https://keep.google.com/...">
+          </label>
+          <label>Memo
+            <textarea name="free_note" rows="3" placeholder="自由記述">${safe(i.freeNote || '')}</textarea>
+          </label>
+          <p data-err style="color:#b91c1c;font-size:11px;min-height:14px;"></p>
+          <div class="modal-actions">
+            <button type="button" class="btn" data-modal-cancel>Cancel</button>
+            <button type="submit" class="btn primary" data-modal-ok>Create</button>
+          </div>
+        </form>`;
+    const p = openModal(html);
+    const card = openModal._card;
+    const machineSel = card.querySelector('[name="machine"]');
+    machineSel.value = i.machine || 'DESI';
+    const matrixRow = card.querySelector('[data-matrix-row]');
+    const refresh = () => { matrixRow.style.display = (machineSel.value && machineSel.value !== 'DESI') ? '' : 'none'; };
+    machineSel.addEventListener('change', refresh);
+    refresh();
+    card._collect = () => {
+        const name = (card.querySelector('[name="name"]').value || '').trim();
+        if (!name) { card.querySelector('[data-err]').textContent = 'プロジェクト名は必須'; return null; }
+        return {
+            name,
+            experimentDate: (card.querySelector('[name="experiment_date"]').value || '').trim(),
+            machine: machineSel.value || 'DESI',
+            matrix: (card.querySelector('[name="matrix"]').value || '').trim(),
+            googleKeep: (card.querySelector('[name="google_keep"]').value || '').trim(),
+            freeNote: (card.querySelector('[name="free_note"]').value || '').trim(),
+        };
+    };
+    return p;
+}
+
+async function _fetchServerProjectList(forcePrompt) {
+    if (!SupabaseClient.configured()) return null;
+    let pw = forcePrompt ? '' : _readCachedOwnerPw();
+    if (!pw) {
+        pw = (prompt('サーバから一覧取得: admin password を入力してください', 'MSIadomine') || '').trim();
+        if (!pw) return null;
+    }
+    try {
+        const rows = await SupabaseClient.listProjects(pw);
+        _saveCachedOwnerPw(pw);
+        return Array.isArray(rows) ? rows : [];
+    } catch (e) {
+        console.warn('list_projects failed', e);
+        showToast('サーバ一覧の取得に失敗 (パスワード違い?)');
+        return null;
+    }
+}
+
+async function openProjectsManagerModal() {
+    const safe = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+    const html = `
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
+          <h2 style="margin:0;">プロジェクト管理</h2>
+          <div style="display:flex;gap:6px;">
+            <button type="button" class="btn primary" data-action="new">+ 新規</button>
+            <button type="button" class="btn" data-action="refresh-server">サーバから一覧取得</button>
+          </div>
+        </div>
+        <div data-list style="font-size:12px;"></div>
+        <div class="modal-actions" style="position:sticky;bottom:0;background:#fff;padding-top:8px;">
+          <button type="button" class="btn primary" data-modal-cancel>Close</button>
+        </div>`;
+    const p = openModal(html);
+    const card = openModal._card;
+    if (card) card.classList.add('help-card');
+    const listEl = card.querySelector('[data-list]');
+
+    const renderList = async (serverRows) => {
+        const local = await ProjectStorage.listProjects();
+        const localBySlug = new Map();
+        const localOnly = [];
+        for (const lp of local) {
+            const slug = lp.shareInfo && lp.shareInfo.slug;
+            if (slug) localBySlug.set(slug, lp);
+            else localOnly.push(lp);
+        }
+        const rows = [];
+        for (const lp of localOnly) rows.push({ kind: 'local-only', local: lp });
+        for (const lp of localBySlug.values()) rows.push({ kind: 'local+server-maybe', local: lp });
+        if (Array.isArray(serverRows)) {
+            for (const sp of serverRows) {
+                if (localBySlug.has(sp.slug)) {
+                    const r = rows.find(x => x.local && x.local.shareInfo && x.local.shareInfo.slug === sp.slug);
+                    if (r) { r.kind = 'local+server'; r.server = sp; }
+                } else {
+                    rows.push({ kind: 'server-only', server: sp });
+                }
+            }
+        }
+        rows.sort((a, b) => {
+            const ta = (a.local && a.local.createdAt) || (a.server && (a.server.updated_at || a.server.created_at)) || '';
+            const tb = (b.local && b.local.createdAt) || (b.server && (b.server.updated_at || b.server.created_at)) || '';
+            return tb.localeCompare(ta);
+        });
+        if (!rows.length) {
+            listEl.innerHTML = '<p style="color:#64748b;padding:8px;">プロジェクトがまだありません。「+ 新規」で作成してください。</p>';
+            return;
+        }
+        const fmt = (r) => {
+            const memo = (r.local && r.local.memo) || (r.server && r.server.meta && r.server.meta.memo) || {};
+            const name = (r.local && r.local.displayName) || (r.server && r.server.display_name) || (r.server && r.server.slug) || '(no name)';
+            const slug = (r.local && r.local.shareInfo && r.local.shareInfo.slug) || (r.server && r.server.slug) || '';
+            const date = memo.experimentDate || '—';
+            const machine = memo.machine || '—';
+            const matrix = (machine !== 'DESI' && memo.matrix) ? memo.matrix : '';
+            const note = (memo.freeNote || '').slice(0, 80);
+            const gk = memo.googleKeep || '';
+            const url = (r.local && r.local.shareInfo && r.local.shareInfo.url) || '';
+            const badge = r.kind === 'server-only'
+                ? '<span style="background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:9999px;font-size:10px;margin-left:6px;">Server</span>'
+                : (r.kind === 'local+server'
+                    ? '<span style="background:#dcfce7;color:#166534;padding:1px 6px;border-radius:9999px;font-size:10px;margin-left:6px;">Local + Server</span>'
+                    : '<span style="background:#dbeafe;color:#1d4ed8;padding:1px 6px;border-radius:9999px;font-size:10px;margin-left:6px;">Local</span>');
+            const idAttr = r.local ? `data-local-id="${safe(r.local.id)}"` : '';
+            const slugAttr = slug ? `data-slug="${safe(slug)}"` : '';
+            const urlAttr = url ? `data-url="${safe(url)}"` : '';
+            return `
+                <div class="proj-row" style="border:1px solid #e5e7eb;border-radius:6px;padding:8px;margin-bottom:6px;background:#fff;" ${idAttr} ${slugAttr} ${urlAttr}>
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;flex-wrap:wrap;">
+                    <div style="font-weight:600;color:#0f172a;">${safe(name)} ${badge}</div>
+                    <div style="display:flex;gap:4px;">
+                      ${r.local ? `<button type="button" class="btn" data-action="open-local">Open</button>` : ''}
+                      ${(!r.local && r.server) ? `<button type="button" class="btn" data-action="open-server">Open</button>` : ''}
+                      ${url ? `<button type="button" class="btn" data-action="copy-url">Copy URL</button>` : (r.local ? `<button type="button" class="btn" disabled title="Publish to share してから URL を取得してください">URL なし</button>` : '')}
+                      ${r.local ? `<button type="button" class="btn danger" data-action="delete-local">×</button>` : ''}
+                    </div>
+                  </div>
+                  <div style="margin-top:4px;color:#475569;font-size:11px;">
+                    実験日: ${safe(date)} ・ 装置: ${safe(machine)}${matrix ? ' / Matrix: ' + safe(matrix) : ''}
+                    ${gk ? ' ・ <a href="' + safe(gk) + '" target="_blank" rel="noopener" style="color:#2563eb;">Google Keep ↗</a>' : ''}
+                  </div>
+                  ${note ? `<div style="margin-top:2px;color:#64748b;font-size:11px;">${safe(note)}</div>` : ''}
+                </div>`;
+        };
+        listEl.innerHTML = rows.map(fmt).join('');
+    };
+
+    const wire = () => {
+        listEl.querySelectorAll('.proj-row').forEach(row => {
+            const localId = row.getAttribute('data-local-id');
+            const slug = row.getAttribute('data-slug');
+            const url = row.getAttribute('data-url');
+            const click = (action, fn) => {
+                const btn = row.querySelector(`[data-action="${action}"]`);
+                if (btn) btn.addEventListener('click', fn);
+            };
+            click('open-local', async () => {
+                if (card._close) card._close(null);
+                if (localId) await App.openProject(localId);
+            });
+            click('open-server', async () => {
+                if (!slug) return;
+                if (card._close) card._close(null);
+                location.hash = '#share=' + encodeURIComponent(slug);
+                location.reload();
+            });
+            click('copy-url', async () => {
+                if (!url) return;
+                try { await navigator.clipboard.writeText(url); showToast('URL をコピーしました'); }
+                catch (e) { showToast('クリップボードにアクセスできません'); }
+            });
+            click('delete-local', async () => {
+                if (!localId) return;
+                if (!confirm('ローカルからこのプロジェクトを削除しますか? (サーバ側は残ります)')) return;
+                await ProjectStorage.deleteProject(localId);
+                if (App.project && App.project.id === localId) {
+                    App.project = null;
+                    App.renderEmpty();
+                    localStorage.removeItem('desi:lastProjectId');
+                }
+                await renderList(card._serverRows || null);
+                wire();
+            });
+        });
+    };
+
+    card.querySelector('[data-action="new"]').addEventListener('click', async () => {
+        const data = await openNewProjectFormModal();
+        if (!data) return;
+        await App.createNewProject(data);
+        if (card._close) card._close(null);
+    });
+    card.querySelector('[data-action="refresh-server"]').addEventListener('click', async () => {
+        const rows = await _fetchServerProjectList(true);
+        if (rows) {
+            card._serverRows = rows;
+            await renderList(rows);
+            wire();
+            showToast('サーバから ' + rows.length + ' 件取得しました');
+        }
+    });
+
+    // Initial render: local only first (instant), then attempt server pull
+    // silently with cached pw if available.
+    await renderList(null);
+    wire();
+    const cachedPw = _readCachedOwnerPw();
+    if (cachedPw) {
+        try {
+            const rows = await SupabaseClient.listProjects(cachedPw);
+            if (Array.isArray(rows)) {
+                card._serverRows = rows;
+                await renderList(rows);
+                wire();
+            }
+        } catch (e) {}
+    }
+    return p;
+}
+
 async function importZipFile(file) {
     const zip = await JSZip.loadAsync(file);
     const projDocFile = zip.file('project.json');
@@ -4339,6 +4618,8 @@ const SupabaseClient = (() => {
         releaseRoiLock(token) { return rpc('release_roi_lock', { _token: token }); },
         // Master publish ---------------------------------------
         upsertProjectDoc(args) { return rpc('upsert_project_doc', args); },
+        // Master multi-project listing -------------------------
+        listProjects(ownerPw) { return rpc('list_projects', { _owner_password: ownerPw }); },
         // Storage ----------------------------------------------
         async uploadBlob(bucket, path, blob, contentType) {
             const c = _client(); if (!c) throw new Error('supabase_not_configured');
@@ -4545,13 +4826,24 @@ const App = {
 
         await this.refreshProjectPicker();
         const last = localStorage.getItem('desi:lastProjectId');
+        let opened = false;
         if (last) {
-            try { await this.openProject(last); }
+            try { await this.openProject(last); opened = !!this.project; }
             catch (e) { console.warn('Failed to open last project:', e); this.renderEmpty(); }
         } else {
             this.renderEmpty();
         }
         this.wireUi();
+        // First-run helper: when no local project exists yet, drop the user
+        // straight onto the project management screen instead of the empty
+        // welcome panel. They can pick "+ 新規" from there or pull a list
+        // from the server.
+        if (!opened) {
+            try {
+                const all = await ProjectStorage.listProjects();
+                if (!all.length) openProjectsManagerModal().catch(() => {});
+            } catch (e) {}
+        }
     },
 
     _readShareSlug() {
@@ -4627,9 +4919,14 @@ const App = {
         // The RPC returns { id, slug, displayName, anatomyPalette, sections[], meta }.
         // Sections must already carry storage paths so the client can fetch
         // each blob via Storage public URL.
+        // get_project_doc returns { meta: { project_slug, display_name,
+        // project_meta }, anatomy_palette, sections[] }. project_meta is
+        // the master-supplied memo / palette dict.
+        const docMeta = doc.meta || {};
+        const projectMeta = docMeta.project_meta || {};
         const project = {
             id: doc.id || ('proj_share_' + session.slug),
-            displayName: doc.display_name || doc.displayName || session.slug,
+            displayName: docMeta.display_name || doc.display_name || doc.displayName || session.slug,
             anatomyPalette: doc.anatomy_palette || doc.anatomyPalette || {},
             sections: (doc.sections || []).map(s => ({
                 id: s.client_id || s.id,
@@ -4642,7 +4939,7 @@ const App = {
             })),
             rois: [],
             roiHidden: {},
-            memo: doc.memo || ensureMemoShape(),
+            memo: ensureMemoShape(projectMeta.memo || doc.memo),
             createdAt: doc.created_at || nowIso(),
             updatedAt: doc.updated_at || nowIso(),
             __share: true,
@@ -4777,7 +5074,11 @@ const App = {
         btn.style.display = has ? '' : 'none';
     },
 
-    async createNewProject(name) {
+    async createNewProject(meta) {
+        // meta can be either a plain string (legacy: just the project name)
+        // or an object: { name, experimentDate, machine, matrix, googleKeep, freeNote }.
+        const m = (typeof meta === 'string') ? { name: meta } : (meta || {});
+        const name = (m.name || '').trim() || 'Untitled';
         const project = {
             id: uid('proj'),
             displayName: name,
@@ -4785,11 +5086,18 @@ const App = {
             sections: [],
             rois: [],
             roiHidden: {},
-            memo: ensureMemoShape(),
+            memo: ensureMemoShape({
+                experimentDate: m.experimentDate,
+                machine: m.machine,
+                matrix: m.matrix,
+                googleKeep: m.googleKeep,
+                freeNote: m.freeNote,
+            }),
             createdAt: nowIso(),
         };
         await ProjectStorage.putProject(project);
         await this.openProject(project.id);
+        return project.id;
     },
 
     async deleteCurrentProject() {
@@ -5055,9 +5363,11 @@ const App = {
             this.queueSave(0);
         });
         document.getElementById('btn-new-project').addEventListener('click', async () => {
-            const r = await Wizards.newProject();
-            if (r) await this.createNewProject(r.name);
+            const data = await openNewProjectFormModal();
+            if (data) await this.createNewProject(data);
         });
+        const projBtn = document.getElementById('btn-projects');
+        if (projBtn) projBtn.addEventListener('click', () => { openProjectsManagerModal().catch(e => console.error(e)); });
         document.getElementById('btn-delete-project').addEventListener('click', () => this.deleteCurrentProject());
         document.getElementById('btn-add-section').addEventListener('click', () => this.addSection());
         document.getElementById('btn-export-zip').addEventListener('click', () => exportProjectAsZip());
@@ -5101,6 +5411,7 @@ const App = {
         // Memo form bindings (project-wide)
         const memoMap = {
             'memo-sample': 'sample',
+            'memo-experiment-date': 'experimentDate',
             'memo-machine': 'machine',
             'memo-google-keep': 'googleKeep',
             'memo-free': 'freeNote',
@@ -5115,6 +5426,7 @@ const App = {
                 if (!this.project) return;
                 this.project.memo = this.project.memo || {};
                 this.project.memo[key] = el.value;
+                if (key === 'machine') refreshMatrixVisibility(el.value);
                 this.queueSave();
             });
         }

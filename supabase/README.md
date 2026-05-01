@@ -118,3 +118,33 @@ Supabase の **Project Settings → API** から:
 - 切片を増やすときは `sections` に行を追加するだけ（`ordinal` で並び順を制御）
 - 新規プロジェクトを作るときは `projects` に行を追加 → `set_project_password` を 2 回 → `sections` を入れる
 - Realtime 同期を有効にしたい場合は Supabase の **Database → Replication** で `rois` テーブルを有効化（フロント側のリスナ実装は別途）
+
+---
+
+## Master 用: プロジェクト管理画面の使い方
+
+ヘッダの **`Projects`** ボタン（共有モードでは非表示）でプロジェクト管理モーダルが開きます。
+
+### できること
+
+- **ローカル一覧**: そのブラウザの IndexedDB に保存されているプロジェクト
+- **サーバ一覧の取得**: `[サーバから一覧取得]` を押し、admin password (例: `MSIadomine`) を入力すると、その admin pw が登録されている全プロジェクトをサーバから列挙
+- **+ 新規**: プロジェクト名・実験日時・装置・Matrix・Google Keep・Memo を **一括入力** して作成。ここで入力した内容はビューア右下の Memo パネルに自動反映され、`Publish to share` 時にサーバ側 `projects.meta` にも保存される
+- **Open**: そのプロジェクトを開く（サーバのみのものは share URL に飛ぶ）
+- **Copy URL**: publish 済みなら share URL をクリップボードへコピー
+- **×**: ローカルの記録だけ削除（サーバ側は残る）
+
+### 必要な SQL の再実行
+
+このプロジェクト管理画面 / メタ情報のサーバ保存 / 一覧取得を有効にするには、最新の [`share_locks.sql`](./share_locks.sql) を SQL Editor で再実行してください。冪等です。追加されるもの:
+
+- `projects.meta jsonb` カラム（メタ情報の保存先）
+- `upsert_project_doc` の `meta.memo` 書き込み拡張
+- `get_project_doc` の `meta.project_meta` 返却
+- 新 RPC `list_projects(_owner_password text)`
+
+### admin password の運用
+
+`list_projects` は **入力された admin password が一致するプロジェクトだけ** を返します。共通 admin pw（既定値は Publish モーダルの pre-fill にある `MSIadomine`）をすべてのプロジェクトで使い回せば、1 度の入力で全プロジェクトが取得できます。
+
+> **`MSIadomine` をフロント側にハードコードしているわけではありません**。サーバ側の `project_credentials` に bcrypt ハッシュで保存された値と照合するだけ。安全のため admin password は適宜変更してください。

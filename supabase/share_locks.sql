@@ -101,6 +101,7 @@ grant execute on function public.release_roi_lock(text)        to anon, authenti
 -- idempotently so a fresh "schema.sql then share_locks.sql" run
 -- works end-to-end.
 alter table public.projects add column if not exists updated_at timestamptz not null default now();
+alter table public.projects add column if not exists meta jsonb not null default '{}'::jsonb;
 alter table public.rois     add column if not exists name        text;
 
 -- ---- 3. upsert_project_doc: Master-side publish helper ------
@@ -130,11 +131,21 @@ begin
         return jsonb_build_object('ok', false, 'reason', 'viewer_password_required');
     end if;
 
-    insert into public.projects(slug, display_name, anatomy_palette)
-        values (_slug, coalesce(_display_name, _slug), coalesce(_meta->'anatomyPalette', '{}'::jsonb))
+    insert into public.projects(slug, display_name, anatomy_palette, meta)
+        values (
+            _slug,
+            coalesce(_display_name, _slug),
+            coalesce(_meta->'anatomyPalette', '{}'::jsonb),
+            jsonb_strip_nulls(jsonb_build_object('memo', coalesce(_meta->'memo', '{}'::jsonb)))
+        )
         on conflict (slug) do update
         set display_name    = excluded.display_name,
             anatomy_palette = excluded.anatomy_palette,
+            meta            = jsonb_set(
+                                  coalesce(public.projects.meta, '{}'::jsonb),
+                                  '{memo}',
+                                  coalesce(_meta->'memo', '{}'::jsonb)
+                              ),
             updated_at      = now()
         returning id into v_pid;
 
@@ -247,3 +258,77 @@ begin
     end if;
 end
 $$;
+
+-- ---- 5. get_project_doc: include projects.meta in the payload ------
+-- schema.sql's original definition of get_project_doc was written before
+-- projects.meta existed. Re-create it here so the client receives the
+-- master-supplied memo (experiment date, machine, matrix, Google Keep,
+-- free note) alongside sections and ROIs, and can populate the right-
+-- hand Memo panel directly from the server. Body is otherwise identical
+-- to the schema.sql version.
+create or replace function public.get_project_doc(p_token text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  r record;
+  v_doc jsonb;
+begin
+  select * into r from _resolve_token(p_token);
+  select jsonb_build_object(
+    'meta', jsonb_build_object(
+      'project_slug', p.slug,
+      'display_name', p.display_name,
+      'project_meta', p.meta
+    ),
+    'anatomy_palette', p.anatomy_palette,
+    'sections', coalesce(
+      (select jsonb_agg(jsonb_build_object(
+                'id', s.id,
+                'ordinal', s.ordinal,
+                'display_name', s.display_name,
+                'meta', s.meta,
+                'storage_paths', s.storage_paths
+              ) order by s.ordinal)
+         from sections s
+        where s.project_id = r.project_id),
+      '[]'::jsonb
+    )
+  ) into v_doc
+  from projects p where p.id = r.project_id;
+  return v_doc;
+end
+$$;
+
+grant execute on function public.get_project_doc(text) to anon, authenticated;
+
+-- ---- 6. list_projects: master-side cross-project listing -----------
+-- Returns every project whose admin password matches _owner_password.
+-- Convention: the master uses a single shared admin password (default
+-- "MSIadomine") across all of their published projects, so one call
+-- returns the full catalogue. Mismatching credentials return an empty
+-- result; an empty / too-short password raises 28P01 to keep clients
+-- from probing.
+create or replace function public.list_projects(_owner_password text)
+returns table (slug text, display_name text, meta jsonb, created_at timestamptz, updated_at timestamptz)
+language plpgsql security definer set search_path = public, extensions as $$
+begin
+    if _owner_password is null or length(_owner_password) < 4 then
+        raise exception 'invalid credentials' using errcode = '28P01';
+    end if;
+    return query
+        select p.slug, p.display_name, p.meta, p.created_at, p.updated_at
+          from public.projects p
+         where exists (
+             select 1 from public.project_credentials c
+              where c.project_id = p.id
+                and c.role = 'admin'
+                and c.password_hash = crypt(_owner_password, c.password_hash)
+         )
+         order by coalesce(p.updated_at, p.created_at) desc;
+end
+$$;
+
+grant execute on function public.list_projects(text) to anon, authenticated;
