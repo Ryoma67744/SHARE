@@ -1471,6 +1471,34 @@ class SectionPanel {
         return [(c.height - canvasY) / sx, canvasX / sy];
     }
 
+    // Map a screen-space pointer position to canvas-internal pixels. We can't
+    // use canvas.getBoundingClientRect() directly because the parent
+    // .viewer-rot has a CSS transform (translate × rotate(rot - 90deg) ×
+    // scale around its center — see the CSS rule near line 150). The canvas
+    // bounding box on screen is the AABB of the rotated rectangle, which
+    // doesn't preserve the click-to-pixel mapping under any non-trivial
+    // rotation/scale. Instead, take the pre-transform host element as the
+    // reference frame and apply a closed-form inverse of the transform chain.
+    clientToCanvas(clientX, clientY) {
+        const c = this.dom.croi;
+        const host = this.dom.host;
+        const t = this._ensureViewerTransform();
+        const H = host.getBoundingClientRect();
+        const ox = H.width / 2;
+        const oy = H.height / 2;
+        let hx = clientX - (H.left + ox) - (t.tx || 0);
+        let hy = clientY - (H.top  + oy) - (t.ty || 0);
+        const theta = ((t.rot || 0) - 90) * Math.PI / 180;
+        const cos = Math.cos(theta), sin = Math.sin(theta);
+        let rx =  hx * cos + hy * sin;
+        let ry = -hx * sin + hy * cos;
+        const s = t.scale || 1;
+        rx /= s; ry /= s;
+        const canvasX = (rx + ox) * (c.width  / Math.max(1, H.width));
+        const canvasY = (ry + oy) * (c.height / Math.max(1, H.height));
+        return [canvasX, canvasY];
+    }
+
     attachDrawingHandlers() {
         // pointer events on roi canvas, but only when drawing mode targets this section
         const c = this.dom.croi;
@@ -1478,11 +1506,11 @@ class SectionPanel {
             if (!App.drawing.mode) return;
             if (App.drawing.sectionId && App.drawing.sectionId !== this.section.id) return;
             App.drawing.sectionId = this.section.id;
-            const rect = c.getBoundingClientRect();
-            const sxCss = c.width / Math.max(1, rect.width);
-            const syCss = c.height / Math.max(1, rect.height);
-            const cx = (e.clientX - rect.left) * sxCss;
-            const cy = (e.clientY - rect.top)  * syCss;
+            const [cx, cy] = this.clientToCanvas(e.clientX, e.clientY);
+            // canvas-internal px per CSS px, used to scale the close-loop
+            // hit-test threshold (~8 CSS pixels) into canvas pixels.
+            const hostW = Math.max(1, this.dom.host.getBoundingClientRect().width);
+            const sxCss = c.width / hostW;
             if (App.drawing.vertices.length >= 3) {
                 const ref = this.getMsiRefSize();
                 const sx = c.height / ref.w;
