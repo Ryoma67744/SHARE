@@ -1471,48 +1471,76 @@ class SectionPanel {
         return [(c.height - canvasY) / sx, canvasX / sy];
     }
 
-    // Map a screen-space pointer position to canvas-internal pixels. We can't
-    // use canvas.getBoundingClientRect() directly because the parent
-    // .viewer-rot has a CSS transform (translate × rotate(rot - 90deg) ×
-    // scale around its center — see the CSS rule near line 150). The canvas
-    // bounding box on screen is the AABB of the rotated rectangle, which
-    // doesn't preserve the click-to-pixel mapping under any non-trivial
-    // rotation/scale. Instead, take the pre-transform host element as the
-    // reference frame and apply a closed-form inverse of the transform chain.
+    // Map a screen-space pointer position to canvas-internal pixels.
     //
-    // Note: the canvas does NOT fill .viewer-rot (no inset:0). setupCanvasSize
-    // letterboxes the canvas inside the rot/host with explicit
-    // top/left/width/height styles, so we must subtract the canvas offset and
-    // scale by the canvas's own CSS dimensions — not the host's.
+    // Three independent things can drift between the click handler and the
+    // renderer, each one a past source of "click here, ROI shows up there":
+    //   (1) .viewer-rot's CSS transform (translate × rotate(rot - 90deg) ×
+    //       scale around its center — see the CSS rule near line 150).
+    //       Re-deriving its inverse by hand is correct for today's chain
+    //       but fragile to future additions (skew, perspective, …).
+    //   (2) The canvas does NOT fill .viewer-rot (no inset:0).
+    //       setupCanvasSize letterboxes it via explicit top/left/width/
+    //       height styles using INTEGER host.clientWidth/Height, while the
+    //       click handler used to re-derive the same margins from the
+    //       FRACTIONAL getBoundingClientRect — a few-pixel drift is normal,
+    //       especially right after a layout change.
+    //   (3) .viewer-rot's own width/height can disagree with the host's
+    //       rect under some code paths (setupCanvasSize re-asserts them
+    //       precisely because of past inconsistencies).
+    //
+    // We sidestep all three by letting the browser hand us the actual
+    // composed CSS matrix and inverting it via DOMMatrix, and by reading
+    // the canvas's own style.left/top/width/height directly so we use the
+    // exact values setupCanvasSize wrote to the DOM.
     clientToCanvas(clientX, clientY) {
         const c = this.dom.croi;
         const host = this.dom.host;
-        const t = this._ensureViewerTransform();
+        const rot = this.dom.rot;
         const H = host.getBoundingClientRect();
-        const ox = H.width / 2;
-        const oy = H.height / 2;
-        // Undo translate (in screen px) and shift origin to host center.
-        let hx = clientX - (H.left + ox) - (t.tx || 0);
-        let hy = clientY - (H.top  + oy) - (t.ty || 0);
-        // Undo rotation by -theta.
-        const theta = ((t.rot || 0) - 90) * Math.PI / 180;
-        const cos = Math.cos(theta), sin = Math.sin(theta);
-        let rx =  hx * cos + hy * sin;
-        let ry = -hx * sin + hy * cos;
-        // Undo scale.
-        const s = t.scale || 1;
-        rx /= s; ry /= s;
-        // (rx+ox, ry+oy) is the click position in rot's untransformed frame,
-        // measured from rot's top-left in CSS px. The canvas occupies a
-        // centered sub-rectangle of cssW×cssH inside that frame.
-        const cssW = c.offsetWidth  || parseFloat(c.style.width)  || H.width;
-        const cssH = c.offsetHeight || parseFloat(c.style.height) || H.height;
-        const cLeft = (H.width  - cssW) / 2;
-        const cTop  = (H.height - cssH) / 2;
-        const localX = (rx + ox) - cLeft;
-        const localY = (ry + oy) - cTop;
-        const canvasX = localX * (c.width  / Math.max(1, cssW));
-        const canvasY = localY * (c.height / Math.max(1, cssH));
+
+        // Browser-supplied transform matrix → invert.
+        // getComputedStyle(rot).transform does NOT include the
+        // transform-origin shift, so we still subtract / add the origin
+        // manually around the inversion.
+        const tStr = getComputedStyle(rot).transform;
+        const M = (!tStr || tStr === 'none')
+            ? new DOMMatrixReadOnly()
+            : new DOMMatrixReadOnly(tStr);
+        const inv = M.inverse();
+
+        // .viewer-rot has transform-origin: 50% 50% and (via inset:0 plus
+        // the explicit width/height write in setupCanvasSize) shares the
+        // host's content box. The transform-origin in screen space is
+        // therefore the host center.
+        const originScreenX = H.left + H.width  / 2;
+        const originScreenY = H.top  + H.height / 2;
+
+        const relX = clientX - originScreenX;
+        const relY = clientY - originScreenY;
+        // Inverse matrix: same offset in rot's pre-transform local frame,
+        // still measured from the transform-origin (rot center).
+        const tp = inv.transformPoint(new DOMPoint(relX, relY));
+
+        // Read the canvas's actual placement from its style/offset rather
+        // than recomputing letterbox margins. setupCanvasSize writes
+        // c.style.left/.top/.width/.height directly, so reading them back
+        // here matches the on-screen position exactly.
+        const cssW  = parseFloat(c.style.width)  || c.offsetWidth  || H.width;
+        const cssH  = parseFloat(c.style.height) || c.offsetHeight || H.height;
+        const styleLeft = parseFloat(c.style.left);
+        const styleTop  = parseFloat(c.style.top);
+        const cLeft = Number.isFinite(styleLeft) ? styleLeft : (H.width  - cssW) / 2;
+        const cTop  = Number.isFinite(styleTop)  ? styleTop  : (H.height - cssH) / 2;
+
+        // tp is from rot's center; canvas top-left lives at (cLeft, cTop)
+        // in rot-local coords (measured from rot's top-left), i.e. at
+        // (cLeft - H.width/2, cTop - H.height/2) measured from the center.
+        const canvasCssX = tp.x - (cLeft - H.width  / 2);
+        const canvasCssY = tp.y - (cTop  - H.height / 2);
+
+        const canvasX = canvasCssX * (c.width  / Math.max(1, cssW));
+        const canvasY = canvasCssY * (c.height / Math.max(1, cssH));
         return [canvasX, canvasY];
     }
 
@@ -1525,8 +1553,10 @@ class SectionPanel {
             App.drawing.sectionId = this.section.id;
             const [cx, cy] = this.clientToCanvas(e.clientX, e.clientY);
             // canvas-internal px per CSS px, used to scale the close-loop
-            // hit-test threshold (~8 CSS pixels) into canvas pixels.
-            const cssW = c.offsetWidth || parseFloat(c.style.width) || c.width;
+            // hit-test threshold (~8 CSS pixels) into canvas pixels. Read
+            // the canvas's real CSS width straight from its style for
+            // consistency with clientToCanvas above.
+            const cssW = parseFloat(c.style.width) || c.offsetWidth || c.width;
             const sxCss = c.width / Math.max(1, cssW);
             if (App.drawing.vertices.length >= 3) {
                 const ref = this.getMsiRefSize();
