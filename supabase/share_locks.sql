@@ -149,6 +149,19 @@ as $$
 $$;
 revoke all on function public._verify_master_pw(text) from public, anon, authenticated;
 
+-- Public-callable wrapper used by the manager-page unlock gate. Returns
+-- true/false rather than raising, so the client can show a "wrong
+-- password" message without a network-error code path. Anon-allowed by
+-- design because the caller is the gate itself; even if leaked, it only
+-- enables a (rate-limit-bound) bcrypt check.
+create or replace function public.verify_master_pw(_pw text)
+returns boolean
+language sql security definer set search_path = public, extensions
+as $$
+    select public._verify_master_pw(_pw);
+$$;
+grant execute on function public.verify_master_pw(text) to anon, authenticated;
+
 -- ---- 2c. Publish session token (Phase 1) ---------------------
 -- Short-lived per-publish ticket. Issued by request_publish_session()
 -- after master-pw verification, then sent as the "x-publish-token"
