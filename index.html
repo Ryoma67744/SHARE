@@ -641,9 +641,14 @@ async function openHelpModal(audience, lang) {
         console.error('Markdown render failed', e);
         bodyHtml = '<pre>' + String(md).replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</pre>';
     }
+    // GitHub-style slug: lowercase, spaces → '-', then keep only Unicode
+    // letters / digits / dash / underscore so common punctuation like
+    // '.', '/', ':', '&', '・', '()' (which TOC authors usually drop)
+    // doesn't end up in heading ids. \p{L}\p{N} with /u covers Latin
+    // plus Japanese kana/kanji and other CJK glyphs.
     const slugifyHelp = (s) => String(s).trim().toLowerCase()
-        .replace(/[\.\(\)（）「」、，,]/g, '')
-        .replace(/\s+/g, '-');
+        .replace(/\s+/g, '-')
+        .replace(/[^\p{L}\p{N}_-]/gu, '');
     try {
         const tmp = document.createElement('div');
         tmp.innerHTML = bodyHtml;
