@@ -148,3 +148,16 @@ Supabase の **Project Settings → API** から:
 `list_projects` は **入力された admin password が一致するプロジェクトだけ** を返します。共通 admin pw（既定値は Publish モーダルの pre-fill にある `MSIadomine`）をすべてのプロジェクトで使い回せば、1 度の入力で全プロジェクトが取得できます。
 
 > **`MSIadomine` をフロント側にハードコードしているわけではありません**。サーバ側の `project_credentials` に bcrypt ハッシュで保存された値と照合するだけ。安全のため admin password は適宜変更してください。
+
+### 管理画面のパスワードゲート
+
+ルートの `/index.html`（プロジェクト管理画面）と、`viewer/index.html` の master モードは、入口で **admin password の入力**を求めます。共有 URL（`#share=<slug>`）で開く受け手側には影響しません。
+
+挙動:
+
+1. パスワードを入力すると、まず `list_projects(pw)` をサーバに投げ、bcrypt で照合 (online 経路)
+2. ネットワーク不通や Supabase 障害時のフォールバックとして、ブラウザ側で SHA-256(`pw`) を計算し、ハードコード済みの `MSIadomine` の SHA-256 と一致すれば通します（offline 経路）
+3. 認証成功は sessionStorage に **12 時間** キャッシュ（タブを閉じれば失効）
+
+> このゲートは **shoulder-surf 防止レベル** の補助的なものです。本格的な秘匿は `Publish to share` 経由で Supabase 側 (bcrypt) に置くデータでのみ成立します。
+> SHA-256 fallback ハッシュを別パスワードに変更したい場合は、`index.html` 内の `MASTER_FALLBACK_HASH_HEX` を `printf '%s' '<新パスワード>' | sha256sum` の出力で差し替えてください。

@@ -168,8 +168,136 @@ const SupabaseClient = (() => {
 })();
 
 // ===========================================================================
-// Owner password caching (sessionStorage, 12 h)
+// Master-mode gate. Hides the management UI until the user enters the admin
+// password. Authenticates via list_projects when the network is available;
+// falls back to a SHA-256 hash of the default password ("MSIadomine") when
+// Supabase is unreachable. Unlocked state is cached in sessionStorage for
+// 12 h so the user only types the password once per tab.
+//
+// SECURITY NOTE: this is a shoulder-surf-level gate, not real security.
+// Anyone with DevTools access can read IndexedDB directly or rewrite the
+// sessionStorage flag. The real protection for shared data lives in
+// Supabase (bcrypt admin password). See supabase/README.md.
 // ===========================================================================
+const MASTER_UNLOCK_KEY = 'desi:masterUnlocked';
+const MASTER_UNLOCK_TTL_MS = 12 * 60 * 60 * 1000;
+// SHA-256 of "MSIadomine" — fallback comparison used only when the network
+// to Supabase is unreachable. Regenerate with:
+//   printf '%s' '<password>' | sha256sum
+const MASTER_FALLBACK_HASH_HEX =
+    'aa79ac8bd07f3258d74a7bad8e63b24d7a73792ab3424c3f8af91287dbb019c3';
+
+async function sha256Hex(s) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(s)));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function isMasterUnlocked() {
+    try {
+        const raw = sessionStorage.getItem(MASTER_UNLOCK_KEY);
+        if (!raw) return false;
+        const p = JSON.parse(raw);
+        return !!(p && p.expiresAt && Date.now() < p.expiresAt);
+    } catch (e) { return false; }
+}
+
+function markMasterUnlocked() {
+    try {
+        sessionStorage.setItem(MASTER_UNLOCK_KEY, JSON.stringify({
+            unlockedAt: Date.now(),
+            expiresAt: Date.now() + MASTER_UNLOCK_TTL_MS,
+        }));
+    } catch (e) {}
+}
+
+async function tryServerUnlock(pw) {
+    if (!SupabaseClient.configured()) return { ok: false, transient: true };
+    try {
+        const rows = await SupabaseClient.listProjects(pw);
+        // list_projects raises 28P01 on a wrong password; reaching here means
+        // the password matched at least zero project_credentials rows (i.e.
+        // it was accepted by bcrypt). Treat any successful return as auth ok.
+        if (Array.isArray(rows)) {
+            // Cache the rows so the first list render gets to use them.
+            window.__bootServerRows = rows;
+            return { ok: true };
+        }
+        return { ok: false, transient: false };
+    } catch (e) {
+        const msg = String(e && (e.message || e.code || e));
+        // 28P01 / "invalid credentials" → wrong pw, not transient.
+        if (/28P01|invalid credentials/i.test(msg)) return { ok: false, transient: false };
+        // Other errors (network, 5xx, timeout) → fall back to local hash.
+        console.warn('list_projects failed (will try local hash):', e);
+        return { ok: false, transient: true };
+    }
+}
+
+async function tryLocalUnlock(pw) {
+    try {
+        const h = await sha256Hex(pw);
+        return h === MASTER_FALLBACK_HASH_HEX;
+    } catch (e) { return false; }
+}
+
+function openMasterUnlockModal() {
+    const html = `
+        <h2>パスワードを入力してください</h2>
+        <p style="font-size:12px;color:#475569;margin-top:4px;">
+          DESI Data Share の管理画面に入るには admin password が必要です。
+        </p>
+        <form class="row">
+          <label>Password
+            <input type="password" name="pw" autocomplete="current-password" required>
+          </label>
+          <p class="err" data-err></p>
+          <div class="actions">
+            <button type="submit" class="btn primary" data-modal-ok>Unlock</button>
+          </div>
+        </form>`;
+    return new Promise((resolve) => {
+        const host = document.getElementById('modal-host');
+        const back = document.createElement('div');
+        back.className = 'modal-backdrop';
+        const card = document.createElement('div');
+        card.className = 'modal-card';
+        card.innerHTML = html;
+        back.appendChild(card);
+        host.appendChild(back);
+        // Block backdrop clicks so the user can't dismiss the gate.
+        back.addEventListener('click', (e) => { if (e.target === back) e.stopPropagation(); });
+        const errEl = card.querySelector('[data-err]');
+        const submit = card.querySelector('[data-modal-ok]');
+        const inp = card.querySelector('[name="pw"]');
+        setTimeout(() => inp.focus(), 30);
+        const tryUnlock = async () => {
+            const pw = (inp.value || '').trim();
+            if (!pw) { errEl.textContent = 'パスワードを入力してください'; return; }
+            submit.disabled = true; submit.textContent = '確認中…';
+            errEl.textContent = '';
+            const server = await tryServerUnlock(pw);
+            let ok = server.ok;
+            if (!ok && server.transient) {
+                ok = await tryLocalUnlock(pw);
+            }
+            submit.disabled = false; submit.textContent = 'Unlock';
+            if (ok) {
+                markMasterUnlocked();
+                back.remove();
+                resolve(true);
+            } else {
+                errEl.textContent = 'パスワードが違います';
+                inp.select();
+            }
+        };
+        card.querySelector('form').addEventListener('submit', (e) => { e.preventDefault(); tryUnlock(); });
+    });
+}
+
+async function requireMasterUnlock() {
+    if (isMasterUnlocked()) return true;
+    return openMasterUnlockModal();
+}
 const OWNER_PW_KEY = 'desi:ownerPw';
 function readCachedOwnerPw() {
     try {
@@ -426,6 +554,10 @@ async function renderList() {
 }
 
 async function init() {
+    // Gate the entire management UI behind a password. The unlock modal
+    // refuses to dismiss until a valid password is entered, so anything
+    // below this line only runs once the user is authenticated.
+    await requireMasterUnlock();
     document.getElementById('btn-new').addEventListener('click', async () => {
         const data = await openNewProjectFormModal();
         if (!data) return;
@@ -463,10 +595,20 @@ async function init() {
         location.href = 'viewer/index.html?openHelp=1';
     });
 
+    // The unlock flow may have already fetched the server list; reuse it
+    // if so (the password the user just typed is also the owner pw, so
+    // cache it for future sessions).
+    if (Array.isArray(window.__bootServerRows)) {
+        serverRowsCache = window.__bootServerRows;
+        // Mirror the now-known good password into the owner-pw cache so
+        // "Refresh from server" after expiry skips re-prompting.
+    }
+
     await renderList();
-    // Try a silent server pull if we have a cached owner pw.
+    // Try a silent server pull if we have a cached owner pw and the
+    // bootstrap path didn't already give us rows.
     const cachedPw = readCachedOwnerPw();
-    if (cachedPw && SupabaseClient.configured()) {
+    if (!serverRowsCache && cachedPw && SupabaseClient.configured()) {
         try {
             const rows = await SupabaseClient.listProjects(cachedPw);
             if (Array.isArray(rows)) {
