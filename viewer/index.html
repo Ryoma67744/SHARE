@@ -4899,6 +4899,20 @@ const App = {
         // project password, and hydrate from Supabase. Otherwise behave as a
         // normal Master client backed by IndexedDB.
         const shareSlug = this._readShareSlug();
+        // Master-mode gate. The standalone management page (root
+        // index.html) is the canonical entry point and gates the user
+        // there with a password. If someone bookmarks the viewer URL
+        // directly without going through it, send them back to the
+        // manager so they have to authenticate. Share recipients
+        // (#share=<slug>) are exempt — they have their own viewer pw.
+        if (!shareSlug) {
+            try {
+                const raw = sessionStorage.getItem('desi:masterUnlocked');
+                const p = raw ? JSON.parse(raw) : null;
+                const ok = !!(p && p.expiresAt && Date.now() < p.expiresAt);
+                if (!ok) { location.replace('../'); return; }
+            } catch (e) { location.replace('../'); return; }
+        }
         if (shareSlug) {
             this.wireUi();
             try {
