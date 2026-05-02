@@ -183,6 +183,7 @@ const SupabaseClient = (() => {
     return {
         configured() { return !!_client(); },
         listProjects(ownerPw) { return rpc('list_projects', { _owner_password: ownerPw }); },
+        verifyMasterPw(pw) { return rpc('verify_master_pw', { _pw: pw }); },
     };
 })();
 
@@ -241,23 +242,19 @@ function markMasterUnlocked(pw) {
 
 async function tryServerUnlock(pw) {
     if (!SupabaseClient.configured()) return { ok: false, transient: true };
+    // Authenticate ONLY against master_credentials (the single global
+    // master pw). The earlier draft of this gate called list_projects(pw),
+    // which checks per-project admin passwords — that meant every old
+    // admin pw of every previously-published project still let someone
+    // in, including legacy values like "MSIadomine". verify_master_pw is
+    // the single-row check we actually want.
     try {
-        const rows = await SupabaseClient.listProjects(pw);
-        // list_projects raises 28P01 on a wrong password; reaching here means
-        // the password matched at least zero project_credentials rows (i.e.
-        // it was accepted by bcrypt). Treat any successful return as auth ok.
-        if (Array.isArray(rows)) {
-            // Cache the rows so the first list render gets to use them.
-            window.__bootServerRows = rows;
-            return { ok: true };
-        }
+        const ok = await SupabaseClient.verifyMasterPw(pw);
+        if (ok === true) return { ok: true };
         return { ok: false, transient: false };
     } catch (e) {
-        const msg = String(e && (e.message || e.code || e));
-        // 28P01 / "invalid credentials" → wrong pw, not transient.
-        if (/28P01|invalid credentials/i.test(msg)) return { ok: false, transient: false };
-        // Other errors (network, 5xx, timeout) → fall back to local hash.
-        console.warn('list_projects failed (will try local hash):', e);
+        // Network / 5xx / timeout → fall back to the local SHA-256 hash.
+        console.warn('verify_master_pw failed (will try local hash):', e);
         return { ok: false, transient: true };
     }
 }
@@ -779,15 +776,6 @@ async function init() {
         // audience is 'manage' since this page IS the management screen.
         openHelpModal('manage').catch(e => console.error(e));
     });
-
-    // The unlock flow may have already fetched the server list; reuse it
-    // if so (the password the user just typed is also the owner pw, so
-    // cache it for future sessions).
-    if (Array.isArray(window.__bootServerRows)) {
-        serverRowsCache = window.__bootServerRows;
-        // Mirror the now-known good password into the owner-pw cache so
-        // "Refresh from server" after expiry skips re-prompting.
-    }
 
     await renderList();
     // Try a silent server pull if we have a cached owner pw and the
