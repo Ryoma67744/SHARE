@@ -774,10 +774,44 @@ function labToSrgb(L255, A255, B255) {
     ];
 }
 
+// JPEG-in-TIFF (Compression tag 7): pull the JPEG bitstream straight out of
+// the TIFF strip and let the browser's JPEG decoder render it. UTIF's JPEG
+// path mishandles YCbCr → sRGB conversion when the TIFF claims
+// PhotometricInterpretation=2 (RGB) while the embedded JPEG was actually
+// encoded as YCbCr (which is the JPEG default), producing an image that
+// looks colour-shifted (white → magenta, pink → green).
+async function decodeJpegInTiffToDataUrl(buf, ifd) {
+    const stripOffsets    = ifd.t273;
+    const stripByteCounts = ifd.t279;
+    if (!stripOffsets || !stripByteCounts || stripOffsets.length !== 1) return null;
+    const start = stripOffsets[0];
+    const len   = stripByteCounts[0];
+    if (!Number.isFinite(start) || !Number.isFinite(len) || start + len > buf.byteLength) return null;
+    const jpeg = new Uint8Array(buf, start, len);
+    if (jpeg.length < 2 || jpeg[0] !== 0xFF || jpeg[1] !== 0xD8) return null;  // not SOI
+    const blob = new Blob([jpeg], { type: 'image/jpeg' });
+    try {
+        const bmp = await createImageBitmap(blob);
+        const c = document.createElement('canvas');
+        c.width = bmp.width; c.height = bmp.height;
+        c.getContext('2d').drawImage(bmp, 0, 0);
+        if (typeof bmp.close === 'function') bmp.close();
+        return c.toDataURL('image/png');
+    } catch (_) {
+        return null;
+    }
+}
+
 async function decodeTiffArrayBufferToDataUrl(buf) {
     if (typeof UTIF === 'undefined') throw new Error('UTIF library not loaded');
     const ifds = UTIF.decode(buf);
     if (!ifds || !ifds.length) throw new Error('no IFDs in TIFF');
+    const t259 = (ifds[0].t259 && ifds[0].t259.length) ? ifds[0].t259[0] : 1;
+    if (t259 === 7) {
+        const url = await decodeJpegInTiffToDataUrl(buf, ifds[0]);
+        if (url) return url;
+        // tile / multi-strip / non-SOI start → fall through to UTIF
+    }
     UTIF.decodeImage(buf, ifds[0]);
     const rgba = UTIF.toRGBA8(ifds[0]);
     const W = ifds[0].width, H = ifds[0].height;
