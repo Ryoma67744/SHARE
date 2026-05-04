@@ -4591,15 +4591,17 @@ const Wizards = {
                     const sourceFileId = uid('msifile');
                     let sharedBlobId = null;
                     for (const pick of r.picks) {
-                        const layerKey = 'MSI_' + sanitizeCompoundName(pick.layer.replace(/^MSI_/, ''));
+                        const editedBase = pick.layer.replace(/^MSI_/, '');
+                        const layerKey = 'MSI_' + sanitizeCompoundName(editedBase);
                         const c = (analyteCache && analyteCache.compounds.find(cc => cc.index === pick.index)) || {};
+                        const editedSplit = splitCeCv(editedBase);
                         const compoundMeta = {
-                            name: c.name || pick.layer.replace(/^MSI_/, ''),
-                            base: c.base || splitCeCv(pick.layer.replace(/^MSI_/, '')).base,
+                            name: editedBase,
+                            base: editedSplit.base,
                             precursor: c.precursor != null ? c.precursor : null,
                             product: c.product != null ? c.product : null,
-                            ce: c.ce != null ? c.ce : null,
-                            cv: c.cv != null ? c.cv : null,
+                            ce: editedSplit.ce != null ? editedSplit.ce : (c.ce != null ? c.ce : null),
+                            cv: editedSplit.cv != null ? editedSplit.cv : (c.cv != null ? c.cv : null),
                             sourceFile: r.file.name || '',
                         };
                         await panel.addMsiLayer(layerKey, r.file, {
