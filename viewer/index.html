@@ -5817,11 +5817,20 @@ const SharePreview = {
     _sectionRotations: [],      // per-cell shareDefaultRotation in degrees
     _onKeyDownBound: null,
     _visibilitySnapshot: null,  // Array<{pid, live: string[], persisted: string[]|null}>
+    _grayscaleSnapshot: null,   // Array<{pid, byKey: {[heKey]: bool}}>
+    _syntheticHeKeys: null,     // Map<panelId, syntheticKey> — TIC backdrops we injected
 
     isOpen() { return !!(this.overlay && document.body.contains(this.overlay)); },
 
     close() {
         if (!this.overlay) return;
+        // Order matters: restore HE grayscale flags first (no DOM impact),
+        // then drop synthetic TIC backdrops (mutates imageSources +
+        // section.images), then restore visibility / opacity, then
+        // re-render. Each step intentionally no-ops if its snapshot is
+        // empty so partial-init failures still leave detailed view sane.
+        try { this._restoreGrayscale(); } catch (e) { console.warn('SharePreview restore grayscale failed', e); }
+        try { this._removeTicBackdrop(); } catch (e) { console.warn('SharePreview remove TIC failed', e); }
         try { this._restoreOpacity(); } catch (e) { console.warn('SharePreview restore opacity failed', e); }
         try { this._restoreVisibility(); } catch (e) { console.warn('SharePreview restore visibility failed', e); }
         if (this._savedColormap) {
@@ -5842,6 +5851,8 @@ const SharePreview = {
         }
         this._opacitySnapshot = null;
         this._visibilitySnapshot = null;
+        this._grayscaleSnapshot = null;
+        this._syntheticHeKeys = null;
         this._cellTransforms = [];
         this._sectionRotations = [];
         this._onKeyDownBound = null;
@@ -5954,6 +5965,190 @@ const SharePreview = {
         }
     },
 
+    // ---- HE Mono toggle ----
+    // Snapshot every panel's HE/IF `settings.grayscale` flag so toggling
+    // the preview's "HE Mono" checkbox can mutate freely and roll back on
+    // close. Synthetic TIC layers (HE_STAIN_TIC) are not snapshotted —
+    // they're already grayscale and we drop them entirely on close.
+    _snapshotGrayscale() {
+        const snap = [];
+        if (!App || !App.panels) { this._grayscaleSnapshot = snap; return; }
+        for (const [pid, panel] of App.panels.entries()) {
+            const byKey = {};
+            const settings = panel && panel.imageSettings;
+            if (settings) {
+                for (const key of Object.keys(settings)) {
+                    if (!/HE_STAIN|IF_STAIN/i.test(key)) continue;
+                    if (/_TIC$/.test(key)) continue;  // skip synthetic TIC
+                    byKey[key] = !!settings[key].grayscale;
+                }
+            }
+            snap.push({ pid, byKey });
+        }
+        this._grayscaleSnapshot = snap;
+    },
+
+    // Apply preview-only HE/IF grayscale flag across every panel. Same
+    // mutate-and-render pattern as _applyPreviewOpacity. Synthetic TIC
+    // layers are skipped because their imageSource is already grayscale.
+    _applyHeGrayscale(on) {
+        if (!App || !App.panels) return;
+        const want = !!on;
+        for (const panel of App.panels.values()) {
+            const settings = panel && panel.imageSettings;
+            if (!settings) continue;
+            let dirty = false;
+            for (const key of Object.keys(settings)) {
+                if (!/HE_STAIN|IF_STAIN/i.test(key)) continue;
+                if (/_TIC$/.test(key)) continue;
+                if (settings[key].grayscale !== want) {
+                    settings[key].grayscale = want;
+                    dirty = true;
+                }
+            }
+            if (dirty) {
+                try { panel.renderComposite(); } catch (e) {}
+            }
+        }
+        try { this.refresh(App.project); } catch (e) {}
+    },
+
+    _restoreGrayscale() {
+        if (!this._grayscaleSnapshot || !App || !App.panels) return;
+        for (const entry of this._grayscaleSnapshot) {
+            const panel = App.panels.get(entry.pid);
+            if (!panel || !panel.imageSettings) continue;
+            for (const [key, gray] of Object.entries(entry.byKey)) {
+                if (panel.imageSettings[key]) panel.imageSettings[key].grayscale = !!gray;
+            }
+            try { panel.renderComposite(); } catch (e) {}
+        }
+    },
+
+    // ---- TIC backdrop ----
+    // For sections without an HE/IF layer we synthesise a Total Ion Current
+    // image from the section's MSI rasters and inject it as if it were an
+    // HE_STAIN layer (key prefix `HE_STAIN_TIC`). This way renderComposite's
+    // existing heLikeKeys branch picks it up as the histology backdrop —
+    // requirement ① "use the same overlay method as Master / preview" is
+    // satisfied because the TIC goes through the identical compositing
+    // path (translate → rotate(-90) → scale → drawImage with
+    // ctx.globalAlpha = settings.opacity, source-over).
+    _generateTicForPanel(panel) {
+        return new Promise((resolve) => {
+            try {
+                const msiKeys = Object.keys(panel.section.msiSeries || {})
+                    .filter(k => /^MSI_/i.test(k));
+                if (msiKeys.length === 0) { resolve(null); return; }
+                let refImg = null;
+                for (const k of msiKeys) {
+                    const im = panel.imageSources && panel.imageSources[k];
+                    if (im && im.complete && im.naturalWidth > 0) { refImg = im; break; }
+                }
+                if (!refImg) { resolve(null); return; }
+                const w = refImg.naturalWidth, h = refImg.naturalHeight;
+                const accum = new Float32Array(w * h);
+                const count = new Uint32Array(w * h);
+                const tc = document.createElement('canvas');
+                tc.width = w; tc.height = h;
+                const tctx = tc.getContext('2d', { willReadFrequently: true });
+                let summed = 0;
+                for (const key of msiKeys) {
+                    const img = panel.imageSources[key];
+                    if (!img || !img.complete || img.naturalWidth !== w || img.naturalHeight !== h) continue;
+                    tctx.clearRect(0, 0, w, h);
+                    tctx.drawImage(img, 0, 0);
+                    const d = tctx.getImageData(0, 0, w, h).data;
+                    for (let i = 0, p = 0; i < d.length; i += 4, p++) {
+                        if (d[i+3] === 0) continue;
+                        const lum = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
+                        accum[p] += lum;
+                        count[p]++;
+                    }
+                    summed++;
+                }
+                if (summed === 0) { resolve(null); return; }
+                let maxAvg = 0;
+                for (let p = 0; p < w * h; p++) {
+                    if (count[p] === 0) continue;
+                    const v = accum[p] / count[p];
+                    if (v > maxAvg) maxAvg = v;
+                }
+                const norm = maxAvg > 0 ? 255 / maxAvg : 0;
+                const out = document.createElement('canvas');
+                out.width = w; out.height = h;
+                const octx = out.getContext('2d');
+                const outData = octx.createImageData(w, h);
+                for (let p = 0, j = 0; p < w * h; p++, j += 4) {
+                    if (count[p] === 0) {
+                        outData.data[j+3] = 0;
+                    } else {
+                        const g = Math.max(0, Math.min(255, Math.round(accum[p] / count[p] * norm)));
+                        outData.data[j] = g;
+                        outData.data[j+1] = g;
+                        outData.data[j+2] = g;
+                        outData.data[j+3] = 255;
+                    }
+                }
+                octx.putImageData(outData, 0, 0);
+                const dataUrl = out.toDataURL('image/png');
+                const im = new Image();
+                im.onload = () => resolve(im);
+                im.onerror = () => resolve(null);
+                im.src = dataUrl;
+            } catch (e) {
+                console.warn('TIC generation failed', e);
+                resolve(null);
+            }
+        });
+    },
+
+    async _injectTicBackdrops() {
+        this._syntheticHeKeys = new Map();
+        if (!App || !App.panels) return;
+        for (const [pid, panel] of App.panels.entries()) {
+            const heKeys = Object.keys(panel.section.images || {})
+                .filter(k => /HE_STAIN|IF_STAIN/i.test(k));
+            if (heKeys.length > 0) continue;       // already has histology
+            const ticImg = await this._generateTicForPanel(panel);
+            if (!ticImg) continue;
+            const key = 'HE_STAIN_TIC';             // matches heLikeKeys regex
+            panel.imageSources = panel.imageSources || {};
+            panel.imageSettings = panel.imageSettings || {};
+            panel.section.images = panel.section.images || {};
+            panel.imageSources[key] = ticImg;
+            // applyOpacity:false → renderComposite forces globalAlpha=1 so
+            // the TIC backdrop stays fully opaque even when the user pulls
+            // MSI Opacity down (requirement ③: "背景に固定して").
+            panel.imageSettings[key] = {
+                opacity: 1.0,
+                vmin: 0, vmax: 255,
+                actualMin: 0, actualMax: 255,
+                grayscale: false,
+                applyOpacity: false,
+                synthetic: true,
+            };
+            panel.section.images[key] = { virtual: true, key };
+            panel.visibleLayers.add(key);
+            this._syntheticHeKeys.set(pid, key);
+            try { panel.renderComposite(); } catch (e) {}
+        }
+    },
+
+    _removeTicBackdrop() {
+        if (!this._syntheticHeKeys || !App || !App.panels) return;
+        for (const [pid, key] of this._syntheticHeKeys.entries()) {
+            const panel = App.panels.get(pid);
+            if (!panel) continue;
+            if (panel.imageSources)  delete panel.imageSources[key];
+            if (panel.imageSettings) delete panel.imageSettings[key];
+            if (panel.section && panel.section.images) delete panel.section.images[key];
+            if (panel.visibleLayers) panel.visibleLayers.delete(key);
+            try { panel.renderComposite(); } catch (e) {}
+        }
+        this._syntheticHeKeys = null;
+    },
+
     // Apply a preview-only MSI opacity (0..1) across every section. Mutates
     // panel.imageSettings[k].opacity directly without queueSave/broadcastSync,
     // because share recipients have no IndexedDB persistence and we never
@@ -5997,7 +6192,18 @@ const SharePreview = {
         this._savedColormap = _activeColormapName;
         this._snapshotOpacity();
         this._snapshotVisibility();
+        this._snapshotGrayscale();
         this._forceHeBackdrop();
+        // TIC backdrop injection is async (toDataURL + Image load). Kick
+        // off and refresh the preview cells once it finishes — image grid
+        // will still render synchronously below from existing cdisp data,
+        // then re-sample once TIC is in place. Sections with HE/IF skip
+        // injection entirely.
+        this._injectTicBackdrops().then(() => {
+            try {
+                if (this.isOpen() && App && App.project) this.refresh(App.project);
+            } catch (e) {}
+        }).catch(e => console.warn('TIC inject failed', e));
         this._cellTransforms = [];
         this._sectionRotations = [];
 
@@ -6029,6 +6235,9 @@ const SharePreview = {
                             <option value="jet">Jet</option>
                             <option value="grayscale">Grayscale</option>
                         </select>
+                    </label>
+                    <label>
+                        <input type="checkbox" data-he-mono> HE モノクロ
                     </label>
                     <button type="button" class="preview-reset-zoom" data-reset-zoom>Reset zoom</button>
                 </div>
@@ -6103,6 +6312,16 @@ const SharePreview = {
                     }
                 }
                 this.refresh(project);
+            });
+        }
+
+        // HE Mono checkbox — preview-only grayscale flag for HE/IF layers.
+        // Synthetic TIC backdrops (key suffix _TIC) are excluded from the
+        // grayscale path because they're already grayscale.
+        const heMonoCb = overlay.querySelector('[data-he-mono]');
+        if (heMonoCb) {
+            heMonoCb.addEventListener('change', () => {
+                this._applyHeGrayscale(heMonoCb.checked);
             });
         }
 
@@ -6281,10 +6500,17 @@ const SharePreview = {
     // state and the master-saved rotation. Order is translate → rotate →
     // scale so rotation pivots around the visual center after pan,
     // mirroring the detailed view's `viewer-rot` transform composition.
+    //
+    // The detailed view's CSS uses `rotate(calc(var(--vt-rot) - 90deg))` to
+    // offset the -90° baked into renderComposite when MSI is the canvas
+    // reference. shareDefaultRotation captures the raw `vt-rot` slider
+    // value, so we apply the same -90° here to land on master's exact
+    // visible orientation.
     _applyCellTransform(idx, reset) {
         if (reset) this._cellTransforms[idx] = { tx: 0, ty: 0, scale: 1 };
         const t = this._cellTransforms[idx] || (this._cellTransforms[idx] = { tx: 0, ty: 0, scale: 1 });
-        const rot = this._sectionRotations[idx] || 0;
+        const rotRaw = this._sectionRotations[idx] || 0;
+        const rot = rotRaw - 90;
         const grid = this.overlay && this.overlay.querySelector('[data-image-grid]');
         const wrap = grid && grid.querySelector(`.cell-img-wrap[data-cell-idx="${idx}"]`);
         const stage = wrap && wrap.querySelector('[data-cell-stage]');
