@@ -53,6 +53,11 @@ body.share-mode .picker-row .picker-row-dot,
 body.share-mode .picker-row .picker-row-rename { display:none !important; }
 body.share-mode #method-rows td[data-compound-cell] { cursor:default; }
 body:not(.share-mode) #method-rows td[data-compound-cell] { cursor:text; }
+/* Admin login button — only visible to share-mode viewers who haven't
+   yet elevated. Mirrors the gating used by the preview-overlay button
+   (CSS rule at line 295) so the visibility model is consistent. */
+#btn-share-admin-login { display:none; }
+body.share-mode:not(.share-admin) #btn-share-admin-login { display:inline-flex; align-items:center; gap:4px; }
 #share-mode-banner { display:none; align-items:center; gap:6px; padding:2px 8px; background:#dbeafe; color:#1d4ed8; font-size:11px; border-radius:3px; margin-right:6px; }
 .modal-backdrop { position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:60; display:flex; align-items:center; justify-content:center; }
 .modal-card { background:#fff; border-radius:8px; box-shadow:0 12px 30px rgba(0,0,0,0.2); padding:18px; width:480px; max-width:92vw; max-height:88vh; overflow-y:auto; }
@@ -444,6 +449,9 @@ body.share-mode #btn-share-preview { display:inline-flex; }
             <div id="share-mode-banner" title="Read-only Share mode. ROI editing requires acquiring an exclusive lock.">
                 <span>🔒</span><span>Share view</span>
             </div>
+            <button type="button" id="btn-share-admin-login" class="btn" title="Admin password でログインして Method (MRM) の CE/CV を表示する">
+                <span>🔑</span><span>Admin</span>
+            </button>
             <button type="button" id="btn-share-preview" title="Open the simplified compound comparison preview">
                 <span>📊</span><span>Preview</span>
             </button>
@@ -8674,6 +8682,18 @@ const App = {
             const role = this.shareMode.role || 'viewer';
             try { SharePreview.open(this.project, role); }
             catch (e) { console.warn('SharePreview.open failed', e); }
+        });
+        // Admin elevation from the main share view. The handler lives on
+        // SharePreview because it already manages the unlock RPC + reload
+        // dance; we just trigger the same flow without opening the preview
+        // overlay first. CSS hides the button outside share-mode and after
+        // elevation succeeds (body.share-admin), so no JS-side gating
+        // needed beyond a defensive shareMode check.
+        const shareAdminBtn = document.getElementById('btn-share-admin-login');
+        if (shareAdminBtn) shareAdminBtn.addEventListener('click', () => {
+            if (!this.shareMode) return;
+            try { SharePreview._promptAdminLogin(); }
+            catch (e) { console.warn('admin login failed', e); }
         });
         const helpBtn = document.getElementById('btn-help');
         if (helpBtn) helpBtn.addEventListener('click', () => { openHelpModal().catch(e => console.error(e)); });
