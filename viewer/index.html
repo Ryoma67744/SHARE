@@ -7912,9 +7912,26 @@ const App = {
                     // why we fell through to the password modal.
                     console.warn('[share] no public-link signal for slug', slug, {
                         rpcCode: publicErr.code,
+                        rpcStatus: publicErr.status,
                         rpcMsg: publicErr.message,
+                        rpcDetails: publicErr.details,
+                        rpcHint: publicErr.hint,
                         meta,
                     });
+                    // Detect Supabase auth-rejection responses ("No API
+                    // key found", PGRST301 missing JWT, etc.). When the
+                    // anon key itself isn't being accepted, *every* RPC
+                    // is broken, so the password modal won't help either.
+                    // Surface a clear diagnostic instead of letting the
+                    // recipient stare at a password prompt that can't
+                    // succeed.
+                    const errBody = String((publicErr.message || publicErr.details || publicErr.hint) || '');
+                    const looksLikeAuthFail = /api[_\- ]?key|apikey|JWT|unauthorized|invalid.*token|PGRST301|PGRST302/i.test(errBody);
+                    if (looksLikeAuthFail) {
+                        showToast('Supabase の認証に失敗しました (' + (errBody || publicErr.status || 'unknown') + ')。index.html の SUPABASE_ANON_KEY を確認してください。', 9000);
+                        this.renderEmpty();
+                        return;
+                    }
                 }
                 const password = await openShareUnlockModal(slug);
                 if (!password) { this.renderEmpty(); return; }
