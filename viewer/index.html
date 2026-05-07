@@ -1857,31 +1857,29 @@ class SectionPanel {
         }
     }
 
-    // One-time per-panel warning when this section holds MSI compounds with
-    // mismatched naturalWidth / naturalHeight. The composite renderer assumes
-    // every MSI layer shares a single pixel grid (see comment above
-    // renderComposite). Logged + toasted once so a recipient who notices an
-    // overlay drift between compounds knows it's a known multi-source case
-    // rather than a bug in the data.
+    // One-time per-panel warning for genuinely anomalous MSI rasters.
+    // Cross-source dimension differences are now handled by per-source
+    // T_he_to_msi (see _resolveTHeToMsi), so we only warn when *the same*
+    // source file produced rasters with different sizes — that's a real
+    // import / decoding anomaly rather than a known multi-source case.
     _maybeWarnRasterDimMismatch() {
         if (this._dimMismatchWarned) return;
-        const msiKeys = Object.keys(this.imageSources).filter(k => /^MSI_/i.test(k));
-        if (msiKeys.length < 2) return;
-        const ref = this.imageSources[msiKeys[0]];
-        if (!ref || !ref.naturalWidth) return;
-        const refW = ref.naturalWidth, refH = ref.naturalHeight;
-        for (let i = 1; i < msiKeys.length; i++) {
-            const img = this.imageSources[msiKeys[i]];
-            if (!img || !img.naturalWidth) continue;
-            if (img.naturalWidth !== refW || img.naturalHeight !== refH) {
+        const bySource = new Map();
+        for (const [k, v] of Object.entries(this.imageSources)) {
+            if (!/^MSI_/i.test(k) || !v || !v.naturalWidth) continue;
+            const ent = this.section.msiSeries && this.section.msiSeries[k];
+            const fid = (ent && ent.sourceFileId) || '__legacy__';
+            if (!bySource.has(fid)) bySource.set(fid, []);
+            bySource.get(fid).push({ k, w: v.naturalWidth, h: v.naturalHeight });
+        }
+        for (const [fid, list] of bySource) {
+            if (list.length < 2) continue;
+            const refW = list[0].w, refH = list[0].h;
+            if (list.some(it => it.w !== refW || it.h !== refH)) {
                 this._dimMismatchWarned = true;
-                const dims = msiKeys.map(k => {
-                    const im = this.imageSources[k];
-                    return k + '=' + (im && im.naturalWidth ? (im.naturalWidth + 'x' + im.naturalHeight) : '?');
-                });
-                console.warn('[align] MSI raster dim mismatch in section', this.section.id, dims);
+                console.warn('[align] intra-source MSI raster dim mismatch', fid, list);
                 if (typeof showToast === 'function') {
-                    showToast('この section の MSI ソースの raster サイズが揃っていません — compound を切り替えると HE との重ね合わせがずれて見える場合があります (現状の既知制約)。', 7000);
+                    showToast('同じ MSI ソースファイル内で raster サイズが揃っていません — 取り込みデータが破損している可能性があります。', 7000);
                 }
                 return;
             }
@@ -1981,16 +1979,15 @@ class SectionPanel {
     }
 
     // ---- Composite renderer ----
-    // KNOWN LIMITATION: section.meta.world_coords.T_he_to_msi is a single
-    // affine that maps HE pixels → the FIRST MSI raster's pixel grid (see
-    // getMsiRefSize at viewer/index.html:1850). When a section holds MSI
-    // compounds from multiple source files with different naturalWidth /
-    // naturalHeight (e.g., one xlsx + one analyte 1 txt), the second source
-    // gets stretched to fill cdisp but the HE→MSI alignment was calibrated
-    // for the first source's grid → visible drift on compound switch. The
-    // _maybeWarnRasterDimMismatch() check below surfaces a toast the first
-    // time the panel renders such a section. The proper fix is per-source
-    // T_he_to_msi which is tracked in plan he-msi-cheeky-hinton.md §D.
+    // Per-source alignment: cdisp is sized to the focus compound's source
+    // raster (Compound mode) or the first MSI (Free mode), and the HE→MSI
+    // affine is looked up via _resolveTHeToMsi which prefers
+    // section.meta.world_coords.T_he_to_msi_by_source[fid] before falling
+    // back to the legacy single-T field. App.setFocusCompoundKey re-runs
+    // setupCanvasSize so a focus switch between sources triggers a fresh
+    // canvas + T pair. _maybeWarnRasterDimMismatch now only fires for
+    // intra-source anomalies (multi-source size differences are handled
+    // structurally above).
     renderComposite() {
         const ctx = this.displayCtx;
         if (!ctx || this.dom.cdisp.width === 0) return;
@@ -4399,7 +4396,8 @@ const Wizards = {
               </div>
             </div>
             <p style="font-size:11px;color:#475569;margin-top:0;">
-              スライダーまたは対応点クリックで HE/IF を MSI に重ねます。背後の Section パネルでリアルタイムにプレビューされます。
+              スライダーまたは対応点クリックで HE/IF を MSI に重ねます。背後の Section パネルでリアルタイムにプレビューされます。<br>
+              <span style="color:#64748b;">※ 位置合わせは選択した MSI のソースファイル (.xlsx / .txt) ごとに保存されます。同じソース由来の他 compound も自動で同じ T を使うので、ソースが複数あるときはそれぞれ 1 回ずつ位置合わせしてください。</span>
             </p>
 
             <fieldset style="margin-top:8px;border:1px solid #e2e8f0;border-radius:5px;padding:8px 10px;">
