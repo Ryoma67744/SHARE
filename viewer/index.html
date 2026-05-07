@@ -7860,38 +7860,24 @@ const App = {
 
         let session = stored;
         if (!session) {
-            // Probe is_public via column-restricted anon SELECT before any
-            // RPC. If the row says is_public=true we commit to the public
-            // path and treat unlock_public_project failure as a hard error
-            // (no fallback to the password modal — that would be misleading
-            // for a public link). If is_public=false or the probe fails
-            // (anon SELECT not granted yet on an unmigrated DB), we fall
-            // through to the existing password-modal path.
-            const meta = await SupabaseClient.getProjectPublicState(slug);
-            const isPublicProject = !!(meta && meta.is_public);
+            // Primary signal for "is this a public link?": try
+            // unlock_public_project. The RPC succeeds (returns a viewer
+            // token) iff projects.is_public=true at the database. This
+            // works whether or not the Phase 7 RLS patch is applied, so
+            // recipients of older SQL deployments still skip the modal
+            // for public links. The anon SELECT below acts only as a
+            // diagnostic tiebreaker when the RPC fails — it never gates
+            // the public path on its own.
+            let publicRaw = null;
+            let publicErr = null;
+            try {
+                publicRaw = await SupabaseClient.unlockPublicProject(slug);
+            } catch (e) {
+                publicErr = e;
+            }
+            const publicRow = Array.isArray(publicRaw) ? publicRaw[0] : publicRaw;
 
-            if (isPublicProject) {
-                let publicRaw = null;
-                try {
-                    publicRaw = await SupabaseClient.unlockPublicProject(slug);
-                } catch (e) {
-                    console.warn('unlock_public_project failed despite is_public=true', e);
-                    const code = e && e.code;
-                    const msg = String((e && (e.message || e.details)) || '');
-                    if (code === 'PGRST202' || /Could not find the function/i.test(msg)) {
-                        showToast('Supabase の SQL を最新版に更新してください (unlock_public_project が見つかりません)。', 6000);
-                    } else {
-                        showToast('公開リンクのロック解除に失敗しました: ' + msg, 6000);
-                    }
-                    this.renderEmpty();
-                    return;
-                }
-                const publicRow = Array.isArray(publicRaw) ? publicRaw[0] : publicRaw;
-                if (!publicRow || !publicRow.token) {
-                    showToast('公開リンクのロック解除に失敗しました');
-                    this.renderEmpty();
-                    return;
-                }
+            if (publicRow && publicRow.token) {
                 session = {
                     slug,
                     token: publicRow.token,
@@ -7901,6 +7887,35 @@ const App = {
                 };
                 try { sessionStorage.setItem('desi:share:' + slug, JSON.stringify(session)); } catch (e) {}
             } else {
+                // Tiebreaker: check projects.is_public via the
+                // column-restricted anon SELECT. Only meaningful when
+                // share_locks.sql §3c is applied. If RLS confirms
+                // is_public=true but the RPC still failed, the RPC
+                // itself is broken/missing — surface a hard error
+                // instead of misleadingly asking for a password.
+                const meta = await SupabaseClient.getProjectPublicState(slug);
+                if (meta && meta.is_public === true) {
+                    const code = publicErr && publicErr.code;
+                    const msg = String((publicErr && (publicErr.message || publicErr.details)) || 'unknown');
+                    console.error('[share] is_public=true but unlock_public_project failed:', publicErr);
+                    if (code === 'PGRST202' || /Could not find the function/i.test(msg)) {
+                        showToast('Supabase の SQL を最新版に更新してください (unlock_public_project が見つかりません)。', 7000);
+                    } else {
+                        showToast('公開リンクのロック解除に失敗しました: ' + msg, 7000);
+                    }
+                    this.renderEmpty();
+                    return;
+                }
+                if (publicErr) {
+                    // Both signals say "not public" (or unknown). Log so
+                    // a recipient who *expected* a public link can see
+                    // why we fell through to the password modal.
+                    console.warn('[share] no public-link signal for slug', slug, {
+                        rpcCode: publicErr.code,
+                        rpcMsg: publicErr.message,
+                        meta,
+                    });
+                }
                 const password = await openShareUnlockModal(slug);
                 if (!password) { this.renderEmpty(); return; }
                 // unlock_project is declared `returns table (...)`, so PostgREST
