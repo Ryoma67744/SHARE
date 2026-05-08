@@ -894,11 +894,12 @@ function pickPreviewScalebarLength(umPerPx, targetPx) {
 }
 
 // Format `section.meta.world_coords.msi_um_per_px` into a short label like
-// "50 μm/px" (square pixels) or "50×60 μm/px" (anisotropic). Used in both
-// the SectionPanel canvas-label (master + share recipient main view) and
-// the SharePreview cell title so recipients can verify the acquisition
-// resolution without opening the Align modal. Returns '' when pitch is
-// unset / invalid so callers can fall back to displayName-only.
+// "20×20 μm/px". Always uses x×y form (even when x == y) so the label is
+// unambiguous about which axis is which. Used in both the SectionPanel
+// canvas-label (master + share recipient main view) and the SharePreview
+// cell title so recipients can verify the acquisition resolution without
+// opening the Align modal. Returns '' when pitch is unset / invalid so
+// callers can fall back to displayName-only.
 function formatPixelPitchLabel(sec) {
     const wc = sec && sec.meta && sec.meta.world_coords;
     const um = wc && wc.msi_um_per_px;
@@ -906,7 +907,6 @@ function formatPixelPitchLabel(sec) {
     const x = Number(um.x), y = Number(um.y);
     if (!Number.isFinite(x) || !Number.isFinite(y) || x <= 0 || y <= 0) return '';
     const fmt = v => Number.isInteger(v) ? String(v) : v.toFixed(1);
-    if (Math.abs(x - y) < 1e-6) return fmt(x) + ' μm/px';
     return fmt(x) + '×' + fmt(y) + ' μm/px';
 }
 
@@ -10165,6 +10165,6 @@ document.addEventListener('DOMContentLoaded', () => { App.init().catch(e => { co
      copy. Format: v:YYYY-MM-DD-rN where rN increments for each commit on
      the deploy branch. If the rN you see in the browser is older than what
      the maintainer told you, do a hard reload (Ctrl/Cmd-Shift-R). -->
-<div id="buildTag" title="Hard reload (Ctrl/Cmd+Shift+R) if older than the latest version" style="position:fixed;bottom:4px;right:6px;font-size:10px;color:#94a3b8;pointer-events:auto;z-index:50;user-select:text;">v:2026-05-08-r15</div>
+<div id="buildTag" title="Hard reload (Ctrl/Cmd+Shift+R) if older than the latest version" style="position:fixed;bottom:4px;right:6px;font-size:10px;color:#94a3b8;pointer-events:auto;z-index:50;user-select:text;">v:2026-05-08-r16</div>
 </body>
 </html>

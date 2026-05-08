@@ -171,7 +171,7 @@ Click ≥ 3 corresponding points on each thumbnail, then **`Solve`** runs a comp
 
 > After Save, the main canvas renders **HE underneath, MSI on top (additive blend)** with a **scale bar** at the bottom-left. The bar auto-picks a round value (10 / 20 / 50 / 100 / 200 / 500 μm; 1 / 2 / 5 / 10 mm) and **shrinks the unit when you zoom in**.
 
-> Save also updates the section's top-left **canvas-label** to include the **Pixel pitch** (e.g. `Section 1 · 50 μm/px`). The same label is rendered for share recipients and inside the Preview overlay's cell titles, so collaborators can verify the acquisition resolution without opening the Align modal.
+> Save also updates the section's top-left **canvas-label** to include the **Pixel pitch** in `X×Y μm/px` form (e.g. `Section 1 · 20×20 μm/px` for isotropic, `50×60 μm/px` for anisotropic — both axes are always written so the label is unambiguous). The same label is rendered for share recipients and inside the Preview overlay's cell titles, so collaborators can verify the acquisition resolution without opening the Align modal.
 
 ---
 

@@ -112,7 +112,7 @@ The session expires after **12 hours**. Closing the tab is fine — re-opening t
 | ANALYSIS | Bar chart of the selected ROI across sections × compounds |
 | Memo | Sample / Machine / Matrix / Google Keep / +α … (temporary edits) |
 
-> Each section panel's top-left **section-name label** also shows the **Pixel pitch (μm/px)** when the publisher set it during Align (e.g. `Section 1 · 50 μm/px`). Anisotropic pixels (x ≠ y) appear as `50×60 μm/px`.
+> Each section panel's top-left **section-name label** also shows the **Pixel pitch (μm/px)** when the publisher set it during Align (e.g. `Section 1 · 20×20 μm/px`). Both axes are always written out (`50×60 μm/px` for anisotropic, `20×20 μm/px` for isotropic) so the label is unambiguous.
 
 ---
 
@@ -312,7 +312,7 @@ When an MSI layer is visible AND the publisher has set **MSI pixel size (μm/px)
 - The unit shrinks as you zoom in (e.g. 500 μm → 200 μm → 100 μm) and grows as you zoom out (100 μm → 500 μm → 1 mm). The values come from a NICE round-number set: 10 / 20 / 50 / 100 / 200 / 500 / 1000 / …
 - Pan (drag) and Rotation never move the bar — it stays anchored to the bottom-left of the panel.
 - The bar is hidden on sections with no MSI layer or where the publisher hasn't set a pixel size.
-- The same pitch is also rendered into each section's top-left label (e.g. `Section 1 · 50 μm/px`).
+- The same pitch is also rendered into each section's top-left label (e.g. `Section 1 · 20×20 μm/px`).
 
 ---
 
