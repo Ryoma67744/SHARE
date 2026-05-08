@@ -53,6 +53,8 @@ body.share-mode .picker-row .picker-row-dot,
 body.share-mode .picker-row .picker-row-rename { display:none !important; }
 body.share-mode #method-rows td[data-compound-cell] { cursor:default; }
 body:not(.share-mode) #method-rows td[data-compound-cell] { cursor:text; }
+body:not(.share-mode) .canvas-label { cursor:text; }
+body.share-mode .canvas-label { cursor:default; }
 /* Admin login button — only visible to share-mode viewers who haven't
    yet elevated. Mirrors the gating used by the preview-overlay button
    (CSS rule at line 295) so the visibility model is consistent. */
@@ -1653,6 +1655,18 @@ class SectionPanel {
         const label = document.createElement('div');
         label.className = 'canvas-label';
         label.textContent = this.section.displayName || ('Section ' + (this.section.ordinal || ''));
+        // master only: dblclick to rename. share-mode CSS hides the cursor
+        // affordance and the listener short-circuits to avoid edits from
+        // recipients.
+        label.title = 'master のみ: ダブルクリックで section 名を変更';
+        label.addEventListener('dblclick', (ev) => {
+            ev.preventDefault(); ev.stopPropagation();
+            if (document.body.classList.contains('share-mode')) return;
+            const cur = this.section.displayName || ('Section ' + (this.section.ordinal || ''));
+            const next = (prompt('Section 名を入力してください', cur) || '').trim();
+            if (!next || next === cur) return;
+            App.renameSection(this.section.id, next);
+        });
         canvasCell.appendChild(label);
         this._labelEl = label;
 
@@ -6882,6 +6896,13 @@ const SharePreview = {
                         <input type="range" min="0" max="100" value="100" step="1" data-opacity-slider>
                         <span data-opacity-value>100%</span>
                     </label>
+                    <label>Range
+                        <input type="number" data-preview-range-min step="any" placeholder="min"
+                               style="width:80px;font-size:11px;padding:2px 4px;border:1px solid #cbd5e1;border-radius:3px;">
+                        <span style="color:#94a3b8;">–</span>
+                        <input type="number" data-preview-range-max step="any" placeholder="max"
+                               style="width:80px;font-size:11px;padding:2px 4px;border:1px solid #cbd5e1;border-radius:3px;">
+                    </label>
                     <label>Colormap
                         <select data-colormap-select>
                             <option value="plasma">Plasma</option>
@@ -6943,6 +6964,10 @@ const SharePreview = {
         });
 
         overlay.querySelector('[data-preview-close]').addEventListener('click', () => this.close());
+
+        // Range min/max inputs — applied to every panel that holds the
+        // current focus compound so receivers see one shared scale.
+        this._wireRangeInputs();
 
         // MSI opacity slider — preview-only, rAF-coalesced.
         const slider = overlay.querySelector('[data-opacity-slider]');
@@ -7068,6 +7093,66 @@ const SharePreview = {
         this._renderImageGrid(project, focusKey);
         this._renderStatsTable(project, focusKey);
         this._renderHeaderScalebar(project);
+        this._refreshRangeInputs(project, focusKey);
+    },
+
+    // Range min/max inputs in the preview header. Mirror the master
+    // toolbar's tb-range-min / tb-range-max, applied to every panel that
+    // holds the focus compound so all sections share the same intensity
+    // scale (recipient comparison use case). Wired once in open().
+    _wireRangeInputs() {
+        const minEl = this.overlay.querySelector('[data-preview-range-min]');
+        const maxEl = this.overlay.querySelector('[data-preview-range-max]');
+        if (!minEl || !maxEl) return;
+        const apply = (edge, raw) => {
+            const focusKey = App.focusCompoundKey;
+            if (!focusKey) return;
+            for (const p of App.panels.values()) {
+                if (p.imageSettings && p.imageSettings[focusKey]) {
+                    try { p.applyRangeRaw(edge, raw); } catch (e) {}
+                }
+            }
+        };
+        minEl.addEventListener('change', () => apply('min', minEl.value));
+        maxEl.addEventListener('change', () => apply('max', maxEl.value));
+    },
+
+    // Pull the current focus compound's vmin/vmax from the first panel
+    // that has it, convert luminance back to raw values via lumToRaw and
+    // populate the inputs. Skipped when input is currently focused so we
+    // don't fight the user's typing.
+    _refreshRangeInputs(project, focusKey) {
+        const minEl = this.overlay.querySelector('[data-preview-range-min]');
+        const maxEl = this.overlay.querySelector('[data-preview-range-max]');
+        if (!minEl || !maxEl) return;
+        if (!focusKey) {
+            if (document.activeElement !== minEl) minEl.value = '';
+            if (document.activeElement !== maxEl) maxEl.value = '';
+            minEl.disabled = true; maxEl.disabled = true;
+            return;
+        }
+        let rawMin = NaN, rawMax = NaN;
+        for (const p of App.panels.values()) {
+            const st = p.imageSettings && p.imageSettings[focusKey];
+            const ent = (p.section.msiSeries || {})[focusKey];
+            if (!st || !ent) continue;
+            const rawRange = ent.rawRange || null;
+            const rmin = rawRange ? lumToRaw(st.vmin, rawRange) : st.vmin;
+            const rmax = rawRange ? lumToRaw(st.vmax, rawRange) : st.vmax;
+            if (Number.isFinite(rmin)) rawMin = rmin;
+            if (Number.isFinite(rmax)) rawMax = rmax;
+            if (Number.isFinite(rawMin) && Number.isFinite(rawMax)) break;
+        }
+        if (!Number.isFinite(rawMin) && !Number.isFinite(rawMax)) {
+            minEl.disabled = true; maxEl.disabled = true;
+            return;
+        }
+        minEl.disabled = false; maxEl.disabled = false;
+        const fmt = (typeof formatRawForInput === 'function')
+            ? formatRawForInput
+            : (v) => (Number.isFinite(v) ? String(Number(v.toPrecision(6))) : '');
+        if (document.activeElement !== minEl) minEl.value = Number.isFinite(rawMin) ? fmt(rawMin) : '';
+        if (document.activeElement !== maxEl) maxEl.value = Number.isFinite(rawMax) ? fmt(rawMax) : '';
     },
 
     _drawColorbar() {
@@ -7362,24 +7447,13 @@ const SharePreview = {
         const body = this.overlay.querySelector('[data-stats-body]');
         if (!head || !body) return;
         const sections = project.sections || [];
-        const names = sections.map(s => s.displayName || '');
-        const commonPrefix = findCommonNamePrefix(names);
-        const colCount = sections.length;
         const safe = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
-        // Row 1 (group header) shows the shared prefix when the sections form
-        // an obvious cohort; otherwise fall back to the project displayName so
-        // the cell never repeats a value that already appears below in row 2.
-        const groupLabel = commonPrefix || project.displayName || '';
-        const groupHead = `<tr><th class="row-label-head" rowspan="2">File Name</th><th colspan="${colCount}">${safe(groupLabel) || '&nbsp;'}</th></tr>`;
-        // Row 2 strips the common prefix from each section name; when there is
-        // no shared prefix (single-section projects, fully-distinct names),
-        // show the full section name unchanged.
-        const colHead = '<tr>' + sections.map(s => {
-            const fullName = s.displayName || '';
-            const tail = commonPrefix ? fullName.slice(commonPrefix.length) : fullName;
-            return `<th>${safe(tail || fullName)}</th>`;
-        }).join('') + '</tr>';
-        head.innerHTML = groupHead + colHead;
+        // One-row header: each section's displayName is the column label
+        // directly. The previous "File Name + commonPrefix" group row was
+        // redundant once master gained per-section rename, so it's gone.
+        head.innerHTML = '<tr><th class="row-label-head"></th>'
+            + sections.map(s => `<th>${safe(s.displayName || '')}</th>`).join('')
+            + '</tr>';
 
         const cellsFor = (extract) => sections.map(sec => {
             const ent = (sec.msiSeries || {})[focusKey];
@@ -8392,6 +8466,54 @@ const App = {
         Toolbar.refreshAll();
         this.queueSave();
         showToast('コンパウンド名を "' + cleanBase + '" に変更しました。share に反映するには再 publish してください。', 5000);
+    },
+
+    // Master-only: rename a single section's displayName. The same name
+    // drives the per-cell label, the Toolbar section picker, the share-
+    // preview cell title and the stats table column header — all of those
+    // re-render here so the change is visible without a reload. The
+    // r10 _flushSave + IDB read-back path makes a silent persistence
+    // failure (the Section-2-disappeared mode) impossible.
+    async renameSection(sectionId, newName) {
+        if (!this.project) return;
+        const sec = (this.project.sections || []).find(s => s.id === sectionId);
+        if (!sec) return;
+        const cleaned = String(newName || '').trim();
+        if (!cleaned || cleaned === sec.displayName) return;
+        const collision = this.project.sections.some(s => s.id !== sectionId && s.displayName === cleaned);
+        if (collision) {
+            showToast('同名の section が既に存在します: ' + cleaned);
+            return;
+        }
+        sec.displayName = cleaned;
+
+        const panel = this.panels.get(sectionId);
+        if (panel && panel._labelEl) panel._labelEl.textContent = cleaned;
+        if (typeof Toolbar !== 'undefined') {
+            try { Toolbar.refreshSectionPicker(); } catch (e) {}
+        }
+        if (typeof SharePreview !== 'undefined' && SharePreview.isOpen && SharePreview.isOpen()) {
+            try { SharePreview.refresh(this.project); } catch (e) {}
+        }
+        const sectionCountEl = document.getElementById('section-count');
+        // section count text 自体は変わらないので touch しないが、
+        // 任意の DOM 反映は ↑ で済んでいる。
+
+        await this.queueSave(0);
+        await this._flushSave();
+        // displayName を含めた verify (section 数 + 該当 section の name)
+        try {
+            const idb = await ProjectStorage.getProject(this.project.id);
+            const idbSec = idb && (idb.sections || []).find(s => s.id === sectionId);
+            if (!idbSec || idbSec.displayName !== cleaned) {
+                this._showSaveError('Section 名の永続化が確認できません', 'renameSection');
+                return;
+            }
+        } catch (e) {
+            this._showSaveError('Verify 失敗: ' + ((e && e.message) || e), 'renameSection');
+            return;
+        }
+        showToast('Section 名を "' + cleaned + '" に変更しました', 2500);
     },
 
     refreshViewModeUI() {
@@ -9905,6 +10027,6 @@ document.addEventListener('DOMContentLoaded', () => { App.init().catch(e => { co
      copy. Format: v:YYYY-MM-DD-rN where rN increments for each commit on
      the deploy branch. If the rN you see in the browser is older than what
      the maintainer told you, do a hard reload (Ctrl/Cmd-Shift-R). -->
-<div id="buildTag" title="Hard reload (Ctrl/Cmd+Shift+R) if older than the latest version" style="position:fixed;bottom:4px;right:6px;font-size:10px;color:#94a3b8;pointer-events:auto;z-index:50;user-select:text;">v:2026-05-08-r10</div>
+<div id="buildTag" title="Hard reload (Ctrl/Cmd+Shift+R) if older than the latest version" style="position:fixed;bottom:4px;right:6px;font-size:10px;color:#94a3b8;pointer-events:auto;z-index:50;user-select:text;">v:2026-05-08-r11</div>
 </body>
 </html>
