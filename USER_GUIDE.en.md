@@ -112,7 +112,7 @@ The session expires after **12 hours**. Closing the tab is fine — re-opening t
 | ANALYSIS | Bar chart of the selected ROI across sections × compounds |
 | Memo | Sample / Machine / Matrix / Google Keep / +α … (temporary edits) |
 
-> Each section panel's top-left **section-name label** also shows the **Pixel pitch (μm/px)** when the publisher set it during Align (e.g. `Section 1 · 50 μm/px`). Anisotropic pixels (x ≠ y) appear as `50×60 μm/px`.
+> Each section panel's top-left **section-name label** also shows the **Pixel pitch (μm/px)** when the publisher set it during Align (e.g. `Section 1 · 20×20 μm/px`). Both axes are always written out (`50×60 μm/px` for anisotropic, `20×20 μm/px` for isotropic) so the label is unambiguous.
 
 ---
 
@@ -236,7 +236,13 @@ Clicking a row:
 - **Compound mode** focuses that compound across every section (handy for cross-section comparison)
 - **Free mode** simply toggles that single layer on/off
 
-> **Keyboard navigation**: With focus inside the Method table, **↑/↓** move focus to the previous / next compound (Compound mode applies it to every section instantly).
+> **Click a column header to sort**: Click any of the **Compound / Precursor / Fragment / CE / CV / Mean / Max** headers to reorder the table.
+> - 1st click: Compound = A→Z / numeric columns = High→Low (the column-specific default).
+> - 2nd click: reverse direction (Z→A / Low→High).
+> - 3rd click: clears the sort and falls back to the source-file → name order.
+> - The active header shows ▲ / ▼ for direction. Rows with empty values (`—`) always sink to the bottom regardless of direction. Sort state is session-only — reload reverts to the default order.
+
+> **Keyboard navigation**: With focus inside the Method table, **↑/↓** move focus to the previous / next compound (Compound mode applies it to every section instantly, following the current sort order).
 
 > **Compound title format**: Each row title reads `<compound>_<precursor> > <product>` (e.g. `DHA-NEG_327.4 > 283.4`). The same format appears at the top of the screen in Compound mode. Compounds without precursor / product fall back to the bare name.
 
@@ -312,7 +318,7 @@ When an MSI layer is visible AND the publisher has set **MSI pixel size (μm/px)
 - The unit shrinks as you zoom in (e.g. 500 μm → 200 μm → 100 μm) and grows as you zoom out (100 μm → 500 μm → 1 mm). The values come from a NICE round-number set: 10 / 20 / 50 / 100 / 200 / 500 / 1000 / …
 - Pan (drag) and Rotation never move the bar — it stays anchored to the bottom-left of the panel.
 - The bar is hidden on sections with no MSI layer or where the publisher hasn't set a pixel size.
-- The same pitch is also rendered into each section's top-left label (e.g. `Section 1 · 50 μm/px`).
+- The same pitch is also rendered into each section's top-left label (e.g. `Section 1 · 20×20 μm/px`).
 
 ---
 
