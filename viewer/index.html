@@ -333,8 +333,16 @@ body.share-admin #share-preview-overlay .preview-admin-login { display:none; }
 #share-preview-overlay .preview-close:hover { background:#fee2e2; color:#b91c1c; border-color:#fca5a5; }
 
 #share-preview-overlay .preview-body {
-    flex:1 1 auto; display:grid; grid-template-columns: 260px 1fr 80px;
+    flex:1 1 auto; display:grid; grid-template-columns: var(--preview-method-w, 260px) 6px 1fr 80px;
     min-height:0; min-width:0;
+}
+#share-preview-overlay .preview-splitter {
+    background:#1f2937; cursor:col-resize; align-self:stretch;
+    transition:background-color 0.12s;
+}
+#share-preview-overlay .preview-splitter:hover,
+#share-preview-overlay .preview-splitter.dragging {
+    background:#3b82f6;
 }
 
 #share-preview-overlay .preview-method-panel {
@@ -6941,6 +6949,7 @@ const SharePreview = {
                         <tbody data-method-body></tbody>
                     </table>
                 </div>
+                <div class="preview-splitter" data-preview-splitter title="ドラッグして Method パネルの幅を変更"></div>
                 <div class="preview-main">
                     <div class="preview-image-grid" data-image-grid></div>
                     <div class="preview-stats">
@@ -6974,6 +6983,11 @@ const SharePreview = {
         // Range min/max inputs — applied to every panel that holds the
         // current focus compound so receivers see one shared scale.
         this._wireRangeInputs();
+
+        // Method-panel resize splitter. Stores the chosen width in
+        // localStorage so the layout persists across preview opens and
+        // browser sessions.
+        this._wireMethodSplitter();
 
         // MSI opacity slider — preview-only, rAF-coalesced.
         const slider = overlay.querySelector('[data-opacity-slider]');
@@ -7127,6 +7141,56 @@ const SharePreview = {
         };
         minEl.addEventListener('change', () => apply('min', minEl.value));
         maxEl.addEventListener('change', () => apply('max', maxEl.value));
+    },
+
+    // Drag-to-resize the Method panel column. Width is written into the
+    // overlay's --preview-method-w CSS variable (the grid template column
+    // reads from it) and mirrored to localStorage so the choice survives
+    // a preview re-open. Clamped to a sensible range so the user can't
+    // collapse the panel into oblivion or starve the image grid.
+    _wireMethodSplitter() {
+        const splitter = this.overlay.querySelector('[data-preview-splitter]');
+        const overlay = this.overlay;
+        if (!splitter || !overlay) return;
+        const LS_KEY = 'desi:layout:previewMethodW';
+        const MIN_W = 140;
+        const MAX_W = 600;
+        const restored = parseInt(localStorage.getItem(LS_KEY) || '', 10);
+        if (Number.isFinite(restored)) {
+            overlay.style.setProperty('--preview-method-w',
+                Math.min(MAX_W, Math.max(MIN_W, restored)) + 'px');
+        }
+        splitter.addEventListener('pointerdown', (ev) => {
+            if (ev.button !== 0) return;
+            ev.preventDefault();
+            try { splitter.setPointerCapture(ev.pointerId); } catch (er) {}
+            splitter.classList.add('dragging');
+            // Snapshot the current method-panel rect so deltas map onto
+            // its left edge regardless of any padding / margin shifts.
+            const methodEl = overlay.querySelector('.preview-method-panel');
+            const startRect = methodEl.getBoundingClientRect();
+            const startLeft = startRect.left;
+            const move = (e) => {
+                const w = Math.min(MAX_W, Math.max(MIN_W, e.clientX - startLeft));
+                overlay.style.setProperty('--preview-method-w', w + 'px');
+            };
+            const up = (e) => {
+                try { splitter.releasePointerCapture(ev.pointerId); } catch (er) {}
+                splitter.classList.remove('dragging');
+                splitter.removeEventListener('pointermove', move);
+                splitter.removeEventListener('pointerup', up);
+                splitter.removeEventListener('pointercancel', up);
+                // Persist final width.
+                const cur = overlay.style.getPropertyValue('--preview-method-w');
+                const px = parseInt(String(cur).replace(/[^\d.-]/g, ''), 10);
+                if (Number.isFinite(px)) {
+                    try { localStorage.setItem(LS_KEY, String(px)); } catch (er) {}
+                }
+            };
+            splitter.addEventListener('pointermove', move);
+            splitter.addEventListener('pointerup', up);
+            splitter.addEventListener('pointercancel', up);
+        });
     },
 
     // Pull the current focus compound's vmin/vmax from the first panel
@@ -10068,6 +10132,6 @@ document.addEventListener('DOMContentLoaded', () => { App.init().catch(e => { co
      copy. Format: v:YYYY-MM-DD-rN where rN increments for each commit on
      the deploy branch. If the rN you see in the browser is older than what
      the maintainer told you, do a hard reload (Ctrl/Cmd-Shift-R). -->
-<div id="buildTag" title="Hard reload (Ctrl/Cmd+Shift+R) if older than the latest version" style="position:fixed;bottom:4px;right:6px;font-size:10px;color:#94a3b8;pointer-events:auto;z-index:50;user-select:text;">v:2026-05-08-r13</div>
+<div id="buildTag" title="Hard reload (Ctrl/Cmd+Shift+R) if older than the latest version" style="position:fixed;bottom:4px;right:6px;font-size:10px;color:#94a3b8;pointer-events:auto;z-index:50;user-select:text;">v:2026-05-08-r14</div>
 </body>
 </html>
