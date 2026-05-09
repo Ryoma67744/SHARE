@@ -169,6 +169,8 @@ Click ≥ 3 corresponding points on each thumbnail, then **`Solve`** runs a comp
 - **Cancel**: Restore the snapshot taken when the modal opened (preview rolls back).
 - **Save**: Write the current values into `sec.meta.world_coords.T_he_to_msi` (+ `T_he_to_msi_by_source[fid]`) and `msi_um_per_px`, persist to IndexedDB, and refresh the ROI physical scale.
 
+> **The modal's HE / MSI thumbnails render in the same orientation as the main canvas** — the section's Rotation, Flip H/V, and the implicit -90° MSI bake are all applied. Clicking a landmark stores the raw HE/MSI pixel coordinate (the orientation transform is reversed internally), so Solve and T computation behave identically regardless of the visible orientation.
+
 > After Save, the main canvas renders **HE underneath, MSI on top (additive blend)** with a **scale bar** at the bottom-left. The bar auto-picks a round value (10 / 20 / 50 / 100 / 200 / 500 μm; 1 / 2 / 5 / 10 mm) and **shrinks the unit when you zoom in**.
 
 > Save also updates the section's top-left **canvas-label** to include the **Pixel pitch** in `X×Y μm/px` form (e.g. `Section 1 · 20×20 μm/px` for isotropic, `50×60 μm/px` for anisotropic — both axes are always written so the label is unambiguous). The same label is rendered for share recipients and inside the Preview overlay's cell titles, so collaborators can verify the acquisition resolution without opening the Align modal.
