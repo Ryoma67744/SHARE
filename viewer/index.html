@@ -6374,23 +6374,32 @@ function _saveCachedMasterPw(pw) {
 // Used by both publishProjectToShare (modal-driven manual publish) and
 // App.autoPublishProject (silent background publish on save).
 //
-// shareInfo.uploadedBlobIds tracks blobs already on the server: subsequent
-// publishes skip those uploads and only push new blob references through
-// the upsert_project_doc args. Existing manual publishes also benefit from
-// this — re-publishing after editing meta no longer re-uploads every blob.
+// shareInfo.uploadedPaths tracks the EXACT Storage paths already uploaded:
+// subsequent publishes skip those uploads and only push new blob references
+// through the upsert_project_doc args. Path-based (instead of blobId-based)
+// so changing the slug or section IDs forces a fresh upload — without this,
+// re-publishing under a new slug recorded the new path in the DB but left
+// the actual object only at the OLD path, producing HTTP 400s on fetch.
+//
+// Optional fallback `opts.forceFullUpload` (or `project.shareInfo.forceFullUpload`)
+// clears the cache for one publish so a recipient who's hitting "missing
+// blob" errors can be rescued by a full re-push.
 async function _publishCore(project, meta, masterPw, opts) {
     opts = opts || {};
     const silent = !!opts.silent;
     const onProgress = opts.onProgress || (() => {});
+    const forceFull = !!opts.forceFullUpload || !!(project.shareInfo && project.shareInfo.forceFullUpload);
 
     if (!SupabaseClient.configured()) throw new Error('supabase_not_configured');
     const sess = await SupabaseClient.requestPublishSession(masterPw, meta.slug);
     const publishToken = sess && sess.token;
     if (!publishToken) throw new Error('publish session token failed');
 
-    // Set of blob IDs already on the server. New blobs encountered during
-    // this publish are added so the next call skips them.
-    const uploaded = new Set((project.shareInfo && project.shareInfo.uploadedBlobIds) || []);
+    // Set of full Storage paths already on the server. New paths encountered
+    // during this publish are added so the next call skips them.
+    const uploadedPaths = forceFull
+        ? new Set()
+        : new Set((project.shareInfo && project.shareInfo.uploadedPaths) || []);
 
     const uploadTasks = [];
     const sectionsPayload = [];
@@ -6400,9 +6409,9 @@ async function _publishCore(project, meta, masterPw, opts) {
             if (!ent || !ent.blobId) return;
             const filename = (ent.filename) || (k + '.bin');
             const path = `${meta.slug}/${sec.id}/${kindFolder}/${ent.blobId}__${filename}`;
-            if (uploaded.has(ent.blobId)) {
-                // Already on the server: just record the path in the
-                // section payload, skip the network round-trip.
+            if (uploadedPaths.has(path)) {
+                // Already on the server at this exact path: just record
+                // the ref in the section payload, skip the network upload.
                 if (slot === 'msiSeries') storage[slot][k] = Object.assign({}, ent, { path, mime: ent.mime, filename });
                 else storage[slot][k] = { path, mime: ent.mime, filename };
                 return;
@@ -6444,7 +6453,7 @@ async function _publishCore(project, meta, masterPw, opts) {
         const ref = { path: task.path, mime: blob.mime || (task.ent && task.ent.mime), filename: task.filename };
         if (task.slot === 'msiSeries') task.storage[task.slot][task.key] = Object.assign({}, task.ent, ref);
         else task.storage[task.slot][task.key] = ref;
-        uploaded.add(task.blobId);
+        uploadedPaths.add(task.path);
         doneCount++; doneBytes += size;
         if (progress) progress.update(doneCount, uploadTasks.length, doneBytes, totalBytes);
         onProgress(doneCount, uploadTasks.length);
@@ -6507,8 +6516,10 @@ async function _publishCore(project, meta, masterPw, opts) {
 
     const url = `${location.origin}${location.pathname}#share=${encodeURIComponent(meta.slug)}`;
     // Merge into existing shareInfo so we keep publishedAt unless this is
-    // the first publish. uploadedBlobIds + lastSyncedAt drive the
+    // the first publish. uploadedPaths + lastSyncedAt drive the
     // skip-already-uploaded path and the conflict detection respectively.
+    // Drop the legacy uploadedBlobIds (was blobId-keyed; broke when slug
+    // or section IDs changed) and the one-shot forceFullUpload flag.
     const prev = project.shareInfo || {};
     project.shareInfo = Object.assign({}, prev, {
         slug: meta.slug,
@@ -6518,8 +6529,10 @@ async function _publishCore(project, meta, masterPw, opts) {
         url,
         publishedAt: prev.publishedAt || nowIso(),
         lastSyncedAt: nowIso(),
-        uploadedBlobIds: [...uploaded],
+        uploadedPaths: [...uploadedPaths],
     });
+    delete project.shareInfo.uploadedBlobIds;
+    delete project.shareInfo.forceFullUpload;
     return result;
 }
 
@@ -10752,6 +10765,6 @@ document.addEventListener('DOMContentLoaded', () => { App.init().catch(e => { co
      copy. Format: v:YYYY-MM-DD-rN where rN increments for each commit on
      the deploy branch. If the rN you see in the browser is older than what
      the maintainer told you, do a hard reload (Ctrl/Cmd-Shift-R). -->
-<div id="buildTag" title="Hard reload (Ctrl/Cmd+Shift+R) if older than the latest version" style="position:fixed;bottom:4px;right:6px;font-size:10px;color:#94a3b8;pointer-events:auto;z-index:50;user-select:text;">v:2026-05-08-r23</div>
+<div id="buildTag" title="Hard reload (Ctrl/Cmd+Shift+R) if older than the latest version" style="position:fixed;bottom:4px;right:6px;font-size:10px;color:#94a3b8;pointer-events:auto;z-index:50;user-select:text;">v:2026-05-08-r24</div>
 </body>
 </html>
