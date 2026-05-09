@@ -270,6 +270,8 @@
 
 > パン: ドラッグ (修飾キーなし) / ズーム: マウスホイール / 回転: Rotation 入力か、ヘッダの 🔗 で他切片と同期。
 
+> **Colormap dropdown**: ツールバーの **Colormap** で MSI ヒートマップの色を変えられます (Plasma / Viridis / Inferno / Hot / Jet / Grayscale)。選択は **同じタブ内なら保持** (sessionStorage)。タブを閉じれば master の既定色に戻ります。Preview overlay の同じ dropdown とも同期するので、Preview を閉じた後も主画面で色を切り替え続けられます。
+
 ---
 
 ## 7-bis. レイヤー個別の表示設定 (歯車 ⚙)

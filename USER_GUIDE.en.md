@@ -270,6 +270,8 @@ The **🔗** icon on each field syncs that value across every section. The **`�
 
 > Pan: drag without modifier. Zoom: mouse wheel. Rotation: the input field, optionally synced with 🔗.
 
+> **Colormap dropdown**: The toolbar's **Colormap** lets you swap the MSI heatmap palette (Plasma / Viridis / Inferno / Hot / Jet / Grayscale). The choice is **kept inside this tab** (sessionStorage). Closing the tab reverts to the master's default. The same dropdown lives inside the Preview overlay and stays in sync, so you can keep adjusting colour after closing Preview.
+
 ---
 
 ## 7-bis. Per-layer display settings (gear ⚙)

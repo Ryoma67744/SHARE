@@ -47,6 +47,7 @@ body.share-mode #tb-add-msi,
 body.share-mode #tb-align-heif,
 body.share-mode #tb-rot-share-default,
 body.share-mode #tb-msi-um-group,
+body.share-mode #tb-flip-group,
 body.share-mode #tb-del-section { display:none !important; }
 body.share-mode #share-mode-banner { display:flex !important; }
 body.share-mode .picker-row .picker-row-dot,
@@ -146,6 +147,8 @@ body.share-mode .sync-status { display:none !important; }
 #section-toolbar .tb-btn:disabled { opacity:0.5; cursor:not-allowed; }
 #section-toolbar .tb-icon { font-size:11px; padding:1px 5px; border:1px solid #cbd5e1; border-radius:3px; background:#fff; cursor:pointer; color:#475569; }
 #section-toolbar .tb-icon:hover { background:#eef2ff; color:#1d4ed8; }
+#section-toolbar .tb-icon.is-on { background:#dbeafe; color:#1d4ed8; border-color:#1d4ed8; }
+#section-toolbar #tb-colormap { font-size:11px; padding:1px 4px; border:1px solid #cbd5e1; border-radius:3px; background:#fff; color:#0f172a; cursor:pointer; }
 #section-toolbar .sync-toggle { font-size:11px; padding:1px 4px; border:1px solid #cbd5e1; border-radius:3px; background:#fff; cursor:pointer; color:#94a3b8; line-height:1; }
 #section-toolbar .sync-toggle.linked { background:#dbeafe; color:#1d4ed8; border-color:#93c5fd; }
 #section-toolbar .sync-toggle:hover { background:#eef2ff; }
@@ -610,6 +613,22 @@ body.share-mode #btn-share-preview { display:inline-flex; }
                     <button type="button" id="tb-rot-reset" class="tb-icon" title="Reset translate/rotate/zoom">↻</button>
                     <button type="button" id="tb-rot-share-default" class="tb-icon" title="現在の回転角度を Share preview の初期値として保存">📌</button>
                     <button type="button" class="sync-toggle" data-sync="rot" title="Sync Rotation across sections">🔗</button>
+                </span>
+                <span class="tb-group" id="tb-flip-group">
+                    <span class="tb-label">Flip:</span>
+                    <button type="button" id="tb-flip-h" class="tb-icon" title="MSI/HE をこの section で左右反転 (master only)" disabled>⇄</button>
+                    <button type="button" id="tb-flip-v" class="tb-icon" title="MSI/HE をこの section で上下反転 (master only)" disabled>⇅</button>
+                </span>
+                <span class="tb-group">
+                    <span class="tb-label">Colormap:</span>
+                    <select id="tb-colormap">
+                        <option value="plasma">Plasma</option>
+                        <option value="viridis">Viridis</option>
+                        <option value="inferno">Inferno</option>
+                        <option value="hot">Hot</option>
+                        <option value="jet">Jet</option>
+                        <option value="grayscale">Grayscale</option>
+                    </select>
                 </span>
                 <span class="tb-group" id="tb-msi-um-group">
                     <span class="tb-label">μm/px:</span>
@@ -2144,6 +2163,21 @@ class SectionPanel {
         if (!ctx || this.dom.cdisp.width === 0) return;
         this._maybeWarnRasterDimMismatch();
         ctx.clearRect(0, 0, this.dom.cdisp.width, this.dom.cdisp.height);
+
+        // Section-level flip (master-only setting). Wrap the entire layer
+        // loop in a single mirror transform so MSI + HE/IF + others all
+        // flip uniformly. Outer transforms compose as transform = outer ∘
+        // inner, so the existing per-layer translate+rotate stays valid.
+        const flip = (this.section.meta && this.section.meta.flip) || {};
+        const flipLr = !!flip.lr, flipUd = !!flip.ud;
+        const flipped = flipLr || flipUd;
+        if (flipped) {
+            ctx.save();
+            if (flipLr) ctx.translate(this.dom.cdisp.width, 0);
+            if (flipUd) ctx.translate(0, this.dom.cdisp.height);
+            ctx.scale(flipLr ? -1 : 1, flipUd ? -1 : 1);
+        }
+
         const T = this._resolveTHeToMsi();
         // Mirrors setupCanvasSize's refIsMsi: any MSI layer registered means
         // cdisp is sized to (msi.natH, msi.natW) × upscale, so HE must be
@@ -2279,6 +2313,7 @@ class SectionPanel {
                 }
             }
         }
+        if (flipped) ctx.restore();
         ctx.globalCompositeOperation = 'source-over';
         ctx.globalAlpha = 1.0;
         this.updateScaleBar();
@@ -2339,6 +2374,25 @@ class SectionPanel {
     }
 
     // ---- ROI drawing on this section ----
+    // Section-level flip wrap. ROI canvas (croi) must mirror cdisp so
+    // polygons stay glued to the displayed image when the user toggles
+    // Flip H / Flip V on the toolbar.
+    _withRoiFlip(fn) {
+        const ctx = this.roiCtx;
+        const c = this.dom.croi;
+        const flip = (this.section.meta && this.section.meta.flip) || {};
+        const flipLr = !!flip.lr, flipUd = !!flip.ud;
+        if (flipLr || flipUd) {
+            ctx.save();
+            if (flipLr) ctx.translate(c.width, 0);
+            if (flipUd) ctx.translate(0, c.height);
+            ctx.scale(flipLr ? -1 : 1, flipUd ? -1 : 1);
+            try { fn(); } finally { ctx.restore(); }
+        } else {
+            fn();
+        }
+    }
+
     drawAllRois(highlightRoiId) {
         const ctx = this.roiCtx;
         const c = this.dom.croi;
@@ -2354,20 +2408,22 @@ class SectionPanel {
         const sy = c.width / ref.h;
         const cssW = c.offsetWidth || c.width;
         const pxPerCss = c.width / Math.max(1, cssW);
-        for (const roi of (this.project.rois || [])) {
-            if (this.project.roiHidden && this.project.roiHidden[roi.id]) continue;
-            const poly = (roi.polysBySection || {})[this.section.id];
-            if (!poly || !poly.length) continue;
-            const isHi = roi.id === highlightRoiId;
-            const rgba = roi.rgba || [200, 200, 200, 255];
-            ctx.beginPath();
-            ctx.moveTo(poly[0][1] * sy, c.height - poly[0][0] * sx);
-            for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i][1] * sy, c.height - poly[i][0] * sx);
-            ctx.closePath();
-            ctx.strokeStyle = 'rgba(' + rgba[0] + ',' + rgba[1] + ',' + rgba[2] + ',0.95)';
-            ctx.lineWidth = (isHi ? 2.0 : 1.0) * pxPerCss;
-            ctx.stroke();
-        }
+        this._withRoiFlip(() => {
+            for (const roi of (this.project.rois || [])) {
+                if (this.project.roiHidden && this.project.roiHidden[roi.id]) continue;
+                const poly = (roi.polysBySection || {})[this.section.id];
+                if (!poly || !poly.length) continue;
+                const isHi = roi.id === highlightRoiId;
+                const rgba = roi.rgba || [200, 200, 200, 255];
+                ctx.beginPath();
+                ctx.moveTo(poly[0][1] * sy, c.height - poly[0][0] * sx);
+                for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i][1] * sy, c.height - poly[i][0] * sx);
+                ctx.closePath();
+                ctx.strokeStyle = 'rgba(' + rgba[0] + ',' + rgba[1] + ',' + rgba[2] + ',0.95)';
+                ctx.lineWidth = (isHi ? 2.0 : 1.0) * pxPerCss;
+                ctx.stroke();
+            }
+        });
         this.drawDrawingPreview();
     }
 
@@ -2383,27 +2439,36 @@ class SectionPanel {
         const verts = App.drawing.vertices;
         if (!verts.length) return;
         const pts = verts.map(([mx, my]) => [my * sy, c.height - mx * sx]);
-        ctx.save();
-        ctx.strokeStyle = 'rgba(255,255,255,0.95)';
-        ctx.lineWidth = 1.5 * pxPerCss;
-        ctx.setLineDash([4 * pxPerCss, 3 * pxPerCss]);
-        ctx.beginPath();
-        ctx.moveTo(pts[0][0], pts[0][1]);
-        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.fillStyle = 'rgba(255,255,255,0.95)';
-        const r = 3 * pxPerCss;
-        for (const [x, y] of pts) { ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI); ctx.fill(); }
-        ctx.restore();
+        this._withRoiFlip(() => {
+            ctx.save();
+            ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+            ctx.lineWidth = 1.5 * pxPerCss;
+            ctx.setLineDash([4 * pxPerCss, 3 * pxPerCss]);
+            ctx.beginPath();
+            ctx.moveTo(pts[0][0], pts[0][1]);
+            for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.fillStyle = 'rgba(255,255,255,0.95)';
+            const r = 3 * pxPerCss;
+            for (const [x, y] of pts) { ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI); ctx.fill(); }
+            ctx.restore();
+        });
     }
 
     canvasToMsi(canvasX, canvasY) {
         const c = this.dom.croi;
+        // Section flip is applied as a mirror transform during render; un-flip
+        // the click coords first so the existing -90° MSI mapping still picks
+        // the pixel the user actually clicked on.
+        const flip = (this.section.meta && this.section.meta.flip) || {};
+        let cx = canvasX, cy = canvasY;
+        if (flip.lr) cx = c.width  - cx;
+        if (flip.ud) cy = c.height - cy;
         const ref = this.getMsiRefSize();
         const sx = c.height / ref.w;
         const sy = c.width / ref.h;
-        return [(c.height - canvasY) / sx, canvasX / sy];
+        return [(c.height - cy) / sx, cx / sy];
     }
 
     // Map a screen-space pointer position to canvas-internal pixels.
@@ -2494,14 +2559,21 @@ class SectionPanel {
             const cssW = parseFloat(c.style.width) || c.offsetWidth || c.width;
             const sxCss = c.width / Math.max(1, cssW);
             if (App.drawing.vertices.length >= 3) {
+                // Compare close-loop distance in MSI space so flip H/V
+                // (which mirrors the canvas-space coords) doesn't break
+                // the "click first vertex to finish" affordance.
                 const ref = this.getMsiRefSize();
                 const sx = c.height / ref.w;
                 const sy = c.width / ref.h;
+                const [mxClick, myClick] = this.canvasToMsi(cx, cy);
                 const [mx0, my0] = App.drawing.vertices[0];
-                const cx0 = my0 * sy;
-                const cy0 = c.height - mx0 * sx;
-                const dx = cx - cx0, dy = cy - cy0;
-                if (Math.sqrt(dx*dx + dy*dy) < 8 * sxCss) { App.finalizeDrawing(); return; }
+                // 8 CSS px → equivalent MSI distance: 8 * sxCss canvas px,
+                // and the canvas → MSI scale along the longer axis is 1/sx
+                // (vertical) so 8 * sxCss / Math.min(sx, sy) is the MSI
+                // tolerance that matches the original 8-CSS-px feel.
+                const tolMsi = (8 * sxCss) / Math.min(sx || 1, sy || 1);
+                const dmx = mxClick - mx0, dmy = myClick - my0;
+                if (Math.sqrt(dmx*dmx + dmy*dmy) < tolMsi) { App.finalizeDrawing(); return; }
             }
             const [mx, my] = this.canvasToMsi(cx, cy);
             App.drawing.vertices.push([mx, my]);
@@ -6178,7 +6250,13 @@ async function _publishCore(project, meta, masterPw, opts) {
         _master_pw: masterPw,
         _slug: meta.slug,
         _display_name: project.displayName || meta.slug,
-        _meta: { anatomyPalette: project.anatomyPalette || {}, memo: project.memo || {} },
+        _meta: {
+            anatomyPalette: project.anatomyPalette || {},
+            memo: project.memo || {},
+            // colormap travels with project meta so recipients open with
+            // the master's chosen colour scheme on first load.
+            colormap: (project.meta && project.meta.colormap) || null,
+        },
         _viewer_pw: meta.viewerPassword,
         _admin_pw: meta.adminPassword || null,
         _sections: sectionsPayload,
@@ -6631,6 +6709,10 @@ const SharePreview = {
         if (this._savedColormap) {
             setActiveColormap(this._savedColormap);
             this._savedColormap = null;
+            // Keep the main-view toolbar dropdown in sync with the
+            // restored value so the user doesn't see a stale label.
+            const tb = document.getElementById('tb-colormap');
+            if (tb) tb.value = _activeColormapName;
         }
         // Re-render every panel so the underlying detailed view's cdisp
         // reflects the restored colormap (opacity already handled by
@@ -7140,6 +7222,10 @@ const SharePreview = {
             sel.value = _activeColormapName;
             sel.addEventListener('change', () => {
                 setActiveColormap(sel.value);
+                // Mirror onto the main-view toolbar dropdown so the user
+                // sees consistent state when the preview is dismissed.
+                const tb = document.getElementById('tb-colormap');
+                if (tb) tb.value = sel.value;
                 this._drawColorbar();
                 if (App && App.panels) {
                     for (const p of App.panels.values()) {
@@ -8181,6 +8267,7 @@ const Toolbar = {
     pickerBtn: null, pickerLabel: null, pickerThumb: null, pickerMenu: null,
     rangeMin: null, rangeMax: null, opacityInp: null, rotationInp: null,
     addHeIfBtn: null, addMsiBtn: null, delBtn: null, rotResetBtn: null,
+    flipHBtn: null, flipVBtn: null, colormapSel: null,
     syncButtons: null,
     _menuOpen: false,
     _wired: false,
@@ -8209,6 +8296,9 @@ const Toolbar = {
         this.delBtn = document.getElementById('tb-del-section');
         this.rotResetBtn = document.getElementById('tb-rot-reset');
         this.rotShareDefaultBtn = document.getElementById('tb-rot-share-default');
+        this.flipHBtn = document.getElementById('tb-flip-h');
+        this.flipVBtn = document.getElementById('tb-flip-v');
+        this.colormapSel = document.getElementById('tb-colormap');
         this.syncButtons = this.el.querySelectorAll('.sync-toggle');
 
         this.pickerBtn.addEventListener('click', (ev) => { ev.stopPropagation(); this.togglePickerMenu(); });
@@ -8245,6 +8335,56 @@ const Toolbar = {
                 sec.meta.shareDefaultRotation = Number.isFinite(liveRot) ? liveRot : 0;
                 App.queueSave();
                 showToast('Share preview の初期角度を保存しました: ' + sec.meta.shareDefaultRotation + '°');
+            });
+        }
+
+        // Section-level Flip H/V (master only — hidden in share-mode CSS).
+        // Toggling mutates sec.meta.flip and triggers a re-render of cdisp
+        // + croi so MSI / HE / ROI all flip together. queueSave persists to
+        // IDB and (via auto-publish) ships to recipients.
+        const wireFlip = (btn, axis) => {
+            if (!btn) return;
+            btn.addEventListener('click', () => {
+                const p = this.activePanel();
+                if (!p || !p.section) return;
+                const sec = p.section;
+                sec.meta = sec.meta || {};
+                sec.meta.flip = sec.meta.flip || { lr: false, ud: false };
+                sec.meta.flip[axis] = !sec.meta.flip[axis];
+                try { p.renderComposite(); } catch (e) {}
+                try { p.drawAllRois(); } catch (e) {}
+                App.queueSave();
+                this.refreshFlipButtons();
+            });
+        };
+        wireFlip(this.flipHBtn, 'lr');
+        wireFlip(this.flipVBtn, 'ud');
+
+        // Colormap dropdown — visible to all (master + share recipients).
+        // Master persists via project.meta.colormap → IDB (round-trips to
+        // recipients on next publish). Share recipients persist via
+        // sessionStorage keyed on the share slug so the choice survives a
+        // tab-internal reload but resets on tab-close.
+        if (this.colormapSel) {
+            this.colormapSel.value = _activeColormapName;
+            this.colormapSel.addEventListener('change', () => {
+                const name = this.colormapSel.value;
+                setActiveColormap(name);
+                if (App.panels) {
+                    for (const p of App.panels.values()) {
+                        try { p.renderComposite(); } catch (e) {}
+                    }
+                }
+                if (App.shareMode) {
+                    try {
+                        const slug = App.shareMode.slug || '';
+                        sessionStorage.setItem('desi:share:colormap:' + slug, name);
+                    } catch (e) {}
+                } else if (App.project) {
+                    App.project.meta = App.project.meta || {};
+                    App.project.meta.colormap = name;
+                    App.queueSave();
+                }
             });
         }
 
@@ -8373,6 +8513,24 @@ const Toolbar = {
             this.alignHeIfBtn.disabled = !hasHe;
         }
         if (this.delBtn) this.delBtn.disabled = !has;
+        this.refreshFlipButtons();
+    },
+
+    // Sync the Flip H / V toggle buttons to the active section's
+    // sec.meta.flip state. Disabled when no active section so the user
+    // can't toggle into a void.
+    refreshFlipButtons() {
+        const p = this.activePanel();
+        const has = !!(p && p.section);
+        const flip = (has && p.section.meta && p.section.meta.flip) || {};
+        if (this.flipHBtn) {
+            this.flipHBtn.disabled = !has;
+            this.flipHBtn.classList.toggle('is-on', !!flip.lr);
+        }
+        if (this.flipVBtn) {
+            this.flipVBtn.disabled = !has;
+            this.flipVBtn.classList.toggle('is-on', !!flip.ud);
+        }
     },
 
     refreshRange() {
@@ -9335,6 +9493,9 @@ const App = {
             })),
             rois: [],
             roiHidden: {},
+            // Carry master's project meta (colormap, etc.) intact so future
+            // fields automatically round-trip without a hydrate-side patch.
+            meta: projectMeta,
             memo: ensureMemoShape(projectMeta.memo || doc.memo),
             createdAt: doc.created_at || nowIso(),
             updatedAt: doc.updated_at || nowIso(),
@@ -9413,6 +9574,19 @@ const App = {
         } catch (e) { console.warn('share ROI fetch failed', e); }
 
         this.project = project;
+        // Restore the project-level colormap before the first render so the
+        // initial paint already uses the recipient's last-picked map (or
+        // master's published default). sessionStorage entry wins so a
+        // recipient who chose a colormap earlier in this tab keeps it.
+        try {
+            let cm = (projectMeta && projectMeta.colormap) || null;
+            const slug = (this.shareMode && this.shareMode.slug) || '';
+            const saved = slug && sessionStorage.getItem('desi:share:colormap:' + slug);
+            if (saved) cm = saved;
+            if (cm && COLORMAPS[cm]) setActiveColormap(cm);
+            const sel = document.getElementById('tb-colormap');
+            if (sel) sel.value = _activeColormapName;
+        } catch (e) { /* non-fatal */ }
         document.getElementById('project-name-input').value = project.displayName || '';
         document.getElementById('project-name-input').disabled = true;
         document.getElementById('section-count').textContent = project.sections.length + ' sections';
@@ -9475,6 +9649,21 @@ const App = {
         this.project.roiHidden = this.project.roiHidden || {};
         this.project.memo = ensureMemoShape(this.project.memo);
         backfillLegacyCompoundMeta(this.project);
+        // Restore the project-level colormap (master saved it via the
+        // toolbar dropdown; recipients receive it via publish round-trip).
+        // Share-mode session overrides take precedence so a recipient who
+        // already picked a different colormap in this tab keeps theirs.
+        try {
+            let cm = (project.meta && project.meta.colormap) || null;
+            if (this.shareMode) {
+                const k = 'desi:share:colormap:' + (this.shareMode.slug || '');
+                const saved = sessionStorage.getItem(k);
+                if (saved) cm = saved;
+            }
+            if (cm && COLORMAPS[cm]) setActiveColormap(cm);
+            const sel = document.getElementById('tb-colormap');
+            if (sel) sel.value = _activeColormapName;
+        } catch (e) { /* non-fatal */ }
         localStorage.setItem('desi:lastProjectId', id);
         document.getElementById('project-name-input').value = project.displayName || '';
         document.getElementById('sections-empty').classList.toggle('hidden', this.project.sections.length > 0);
@@ -10322,6 +10511,6 @@ document.addEventListener('DOMContentLoaded', () => { App.init().catch(e => { co
      copy. Format: v:YYYY-MM-DD-rN where rN increments for each commit on
      the deploy branch. If the rN you see in the browser is older than what
      the maintainer told you, do a hard reload (Ctrl/Cmd-Shift-R). -->
-<div id="buildTag" title="Hard reload (Ctrl/Cmd+Shift+R) if older than the latest version" style="position:fixed;bottom:4px;right:6px;font-size:10px;color:#94a3b8;pointer-events:auto;z-index:50;user-select:text;">v:2026-05-08-r19</div>
+<div id="buildTag" title="Hard reload (Ctrl/Cmd+Shift+R) if older than the latest version" style="position:fixed;bottom:4px;right:6px;font-size:10px;color:#94a3b8;pointer-events:auto;z-index:50;user-select:text;">v:2026-05-08-r20</div>
 </body>
 </html>

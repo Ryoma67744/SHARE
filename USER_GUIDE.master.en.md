@@ -251,6 +251,8 @@ Values auto-save to IndexedDB (~400 ms debounce). On Publish they're also writte
 
 > The Method (MRM) table's **Precursor / Fragment / CE / CV** columns are **admin-only**. Visitors entering with the regular viewer password don't see them; only those who unlock with the admin password do.
 
+> **Colormap dropdown**: The toolbar's **Colormap** picker (Plasma / Viridis / Inferno / Hot / Jet / Grayscale) sets the MSI heatmap palette. Your choice is stored in `project.meta.colormap` and ships with Publish to share, so recipients open with the colour you picked. Recipients see the same dropdown and can override locally (kept in sessionStorage for that tab only).
+
 > **Click a column header to sort**: Click any of the Compound / Precursor / Fragment / CE / CV / Mean / Max headers to reorder the rows. 1st click applies the column's default direction (Compound = A→Z, numeric columns = High→Low), 2nd click reverses it, 3rd click clears the sort and falls back to the legacy source-file → name order. Empty cells (`—`) always sink to the bottom. Sort is session-only and shared with the SharePreview Method panel; ↑/↓ keys also follow the displayed order.
 
 ---
@@ -274,6 +276,16 @@ Values auto-save to IndexedDB (~400 ms debounce). On Publish they're also writte
 - Persisted with verify-after-write; failures surface as a red error banner.
 
 > If a rename appears to revert after reload, hit F5; if it persists in IDB, the new name will be restored.
+
+### 9-3. Section Flip H / V (master only)
+
+The toolbar's **Flip** group has `⇄` (mirror left-right) and `⇅` (mirror up-down) buttons for the active section. They're the answer to "I imported this slide upside-down / mirrored — fix it without re-importing."
+
+- Each click flips **both MSI and HE/IF in that section together** (no need to re-run Align for HE).
+- ROI positions follow automatically, and new ROIs you draw afterwards land where you visually click.
+- The state lives in `sec.meta.flip = { lr, ud }` and travels via IDB + publish, so recipients see the flipped orientation.
+- Click again to undo (toggle).
+- Share recipients have the buttons hidden — the master's choice is the final orientation.
 
 ---
 
