@@ -1079,6 +1079,30 @@ function bakeSectionTransformPoint(x, y, rawW, rawH, deg, flipLr, flipUd) {
     return [dx + rotW / 2, dy + rotH / 2];
 }
 
+// 3×3 homogeneous affine helpers (row-major arrays of 3 rows × 3 cols).
+// Used by the Align modal so we can render HE warped through T_he_to_msi
+// (matching the main canvas) and still record landmarks in raw HE pixel
+// space by inverting on click.
+function applyAffinePoint(T, x, y) {
+    return [
+        T[0][0] * x + T[0][1] * y + T[0][2],
+        T[1][0] * x + T[1][1] * y + T[1][2],
+    ];
+}
+
+function invertAffine(T) {
+    const a = T[0][0], b = T[0][1], tx = T[0][2];
+    const c = T[1][0], d = T[1][1], ty = T[1][2];
+    const det = a * d - b * c;
+    if (!Number.isFinite(det) || Math.abs(det) < 1e-12) return null;
+    const inv = 1 / det;
+    return [
+        [ d * inv, -b * inv, (b * ty - d * tx) * inv ],
+        [-c * inv,  a * inv, (c * tx - a * ty) * inv ],
+        [ 0, 0, 1 ],
+    ];
+}
+
 function pointInPolygon(x, y, vertices) {
     let inside = false;
     for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
@@ -4989,6 +5013,10 @@ const Wizards = {
             rafId = requestAnimationFrame(() => {
                 rafId = 0;
                 try { panel.renderComposite(); } catch (e) { console.warn('preview render failed', e); }
+                // Modal HE thumbnail tracks T live so the user sees the same
+                // alignment they're tweaking on the section panel below.
+                try { rebakeHeThumb(); } catch (e) { console.warn('HE thumb rebake failed', e); }
+                try { renderLandmarks(); } catch (e) {}
             });
         };
 
@@ -5290,6 +5318,41 @@ const Wizards = {
             imgEl.dataset.flipUd = t.flipUd ? '1' : '0';
         };
 
+        // Re-bake the HE thumbnail through the current state's T (the affine
+        // the modal is building) plus the section view transform. This is
+        // what makes modal HE align with modal MSI and the main canvas.
+        // Stamp T (+ MSI raw dims) onto the IMG dataset so click/landmark
+        // routines can invert or replay the same chain.
+        const rebakeHeThumb = () => {
+            const heRaw = panel.imageSources && panel.imageSources[state.layerKey];
+            if (!heRaw || !heRaw.complete || !heRaw.naturalWidth) return;
+            const ref = panel.getMsiRefSize();
+            const msiW = (ref && ref.w) || heRaw.naturalWidth;
+            const msiH = (ref && ref.h) || heRaw.naturalHeight;
+            const T = buildHeToMsiAffine(state);
+            // Step 1: HE → MSI raster frame via T.
+            const heInMsi = document.createElement('canvas');
+            heInMsi.width = Math.max(1, Math.round(msiW));
+            heInMsi.height = Math.max(1, Math.round(msiH));
+            const tctx = heInMsi.getContext('2d');
+            tctx.transform(T[0][0], T[1][0], T[0][1], T[1][1], T[0][2], T[1][2]);
+            tctx.drawImage(heRaw, 0, 0);
+            // Step 2: section transform bake (rotation + flip).
+            const t = sectionTransform();
+            const baked = bakeImageWithSectionTransform(heInMsi, t.deg, t.flipLr, t.flipUd);
+            if (!baked) return;
+            heImg.src = baked.toDataURL('image/png');
+            // dataset: rawW/rawH = MSI frame dims (since T already mapped HE → MSI).
+            //          T is stored so click/landmark can invert it. The section
+            //          transform is stored as before.
+            heImg.dataset.rawW = String(heInMsi.width);
+            heImg.dataset.rawH = String(heInMsi.height);
+            heImg.dataset.deg = String(t.deg);
+            heImg.dataset.flipLr = t.flipLr ? '1' : '0';
+            heImg.dataset.flipUd = t.flipUd ? '1' : '0';
+            heImg.dataset.tMatrix = JSON.stringify(T);
+        };
+
         // Sum every MSI series' grayscale luminance into one image. Caller gets
         // an <img> backed by a fresh dataURL; downstream paintMsiToColored
         // re-applies Plasma like for any other MSI thumbnail. Skips any series
@@ -5366,23 +5429,16 @@ const Wizards = {
         // ---- Thumbnails for landmark picking --------------------------------
         const populateThumbs = async () => {
             const t = sectionTransform();
-            // HE: prefer the decoded PNG dataURL cached on the panel; the raw
-            // storage blob is the original TIFF which <img> can't render.
-            // Bake the section transform onto the HE so the modal matches the
-            // main canvas orientation (incl. user rotation + flip + the -90°
-            // MSI bake from renderComposite).
-            const setHeFromImage = (rawImg) => {
-                if (!rawImg || !rawImg.naturalWidth) return;
-                const baked = bakeImageWithSectionTransform(rawImg, t.deg, t.flipLr, t.flipUd);
-                if (!baked) return;
-                heImg.src = baked.toDataURL('image/png');
-                stampThumbDataset(heImg, rawImg.naturalWidth, rawImg.naturalHeight, t);
-            };
+            // HE goes through T_he_to_msi (rebuilt every paint from the
+            // current modal state) so modal HE matches main canvas HE — i.e.
+            // HE warped into MSI's raster frame, then the section view
+            // transform on top. rebakeHeThumb is also called on every
+            // manual-slider update so the HE thumb tracks T live.
             const heCached = panel.imageSources && panel.imageSources[state.layerKey];
             if (heCached && heCached.complete && heCached.naturalWidth) {
-                setHeFromImage(heCached);
+                rebakeHeThumb();
             } else if (heCached) {
-                heCached.addEventListener('load', () => setHeFromImage(heCached), { once: true });
+                heCached.addEventListener('load', rebakeHeThumb, { once: true });
             } else {
                 const heRec = sec.images[state.layerKey];
                 if (heRec && heRec.blobId) {
@@ -5391,7 +5447,11 @@ const Wizards = {
                         const dataUrl = await decodeImageBlobToDataUrl(b.blob, b.mime || heRec.mime);
                         if (dataUrl) {
                             const tmp = new Image();
-                            tmp.onload = () => setHeFromImage(tmp);
+                            tmp.onload = () => {
+                                // Cache the decoded HE so later rebakes don't re-decode.
+                                panel.imageSources[state.layerKey] = tmp;
+                                rebakeHeThumb();
+                            };
                             tmp.src = dataUrl;
                         }
                     }
@@ -5455,17 +5515,30 @@ const Wizards = {
             // Click coords in the baked (rotated/flipped) thumbnail frame.
             const bx = (ev.clientX - rect.left) / Math.max(1, rect.width)  * nW;
             const by = (ev.clientY - rect.top)  / Math.max(1, rect.height) * nH;
-            // Unbake to raw pixel coords so landmarks (and the affine Solve
-            // produces) stay in the original HE/MSI image space.
             const rawW = Number(imgEl.dataset.rawW) || nW;
             const rawH = Number(imgEl.dataset.rawH) || nH;
             const deg = Number(imgEl.dataset.deg) || 0;
             const flipLr = imgEl.dataset.flipLr === '1';
             const flipUd = imgEl.dataset.flipUd === '1';
-            const [rx, ry] = unbakeSectionTransformPoint(bx, by, rawW, rawH, deg, flipLr, flipUd);
+            // Unbake the section transform first → frame the IMG was
+            // rendered FROM (MSI raster for HE; raw MSI for MSI).
+            const [mx, my] = unbakeSectionTransformPoint(bx, by, rawW, rawH, deg, flipLr, flipUd);
+            // For HE, we baked through T as well — invert T to get raw HE
+            // pixel coords. MSI thumbnails skip this branch (no tMatrix).
+            const tStr = imgEl.dataset.tMatrix;
+            if (tStr) {
+                try {
+                    const T = JSON.parse(tStr);
+                    const Tinv = invertAffine(T);
+                    if (Tinv) {
+                        const [hx, hy] = applyAffinePoint(Tinv, mx, my);
+                        return [hx, hy];
+                    }
+                } catch (e) { /* fall through to MSI-frame coords */ }
+            }
             return [
-                Math.max(0, Math.min(rawW - 1, rx)),
-                Math.max(0, Math.min(rawH - 1, ry)),
+                Math.max(0, Math.min(rawW - 1, mx)),
+                Math.max(0, Math.min(rawH - 1, my)),
             ];
         };
 
@@ -5486,9 +5559,6 @@ const Wizards = {
             const drawDots = (svg, pts, imgEl) => {
                 if (!imgEl.naturalWidth) { svg.innerHTML = ''; return; }
                 const rect = imgEl.getBoundingClientRect();
-                // The image is baked at (naturalWidth × naturalHeight) =
-                // rotated bbox. Landmarks live in raw pixel space; bake them
-                // forward so circles land where the user clicked.
                 const rawW = Number(imgEl.dataset.rawW) || imgEl.naturalWidth;
                 const rawH = Number(imgEl.dataset.rawH) || imgEl.naturalHeight;
                 const deg = Number(imgEl.dataset.deg) || 0;
@@ -5496,9 +5566,23 @@ const Wizards = {
                 const flipUd = imgEl.dataset.flipUd === '1';
                 const sx = rect.width  / imgEl.naturalWidth;
                 const sy = rect.height / imgEl.naturalHeight;
+                // For HE, stored landmarks are in raw HE pixel space — apply
+                // T to bring them into MSI's raster frame first, then bake
+                // the section transform. MSI landmarks live in raw MSI space
+                // and only need the section bake.
+                let T = null;
+                const tStr = imgEl.dataset.tMatrix;
+                if (tStr) {
+                    try { T = JSON.parse(tStr); } catch (e) { T = null; }
+                }
                 svg.setAttribute('viewBox', `0 0 ${rect.width} ${rect.height}`);
                 svg.innerHTML = pts.map((p, i) => {
-                    const [bx, by] = bakeSectionTransformPoint(p[0], p[1], rawW, rawH, deg, flipLr, flipUd);
+                    let mx = p[0], my = p[1];
+                    if (T) {
+                        const [tx, ty] = applyAffinePoint(T, mx, my);
+                        mx = tx; my = ty;
+                    }
+                    const [bx, by] = bakeSectionTransformPoint(mx, my, rawW, rawH, deg, flipLr, flipUd);
                     return `<circle cx="${bx*sx}" cy="${by*sy}" r="6" fill="#fde047" stroke="#0f172a" stroke-width="1.5"></circle>` +
                            `<text x="${bx*sx}" y="${by*sy + 4}" text-anchor="middle" font-size="10" font-weight="700" fill="#0f172a">${i+1}</text>`;
                 }).join('');
@@ -10645,6 +10729,6 @@ document.addEventListener('DOMContentLoaded', () => { App.init().catch(e => { co
      copy. Format: v:YYYY-MM-DD-rN where rN increments for each commit on
      the deploy branch. If the rN you see in the browser is older than what
      the maintainer told you, do a hard reload (Ctrl/Cmd-Shift-R). -->
-<div id="buildTag" title="Hard reload (Ctrl/Cmd+Shift+R) if older than the latest version" style="position:fixed;bottom:4px;right:6px;font-size:10px;color:#94a3b8;pointer-events:auto;z-index:50;user-select:text;">v:2026-05-08-r21</div>
+<div id="buildTag" title="Hard reload (Ctrl/Cmd+Shift+R) if older than the latest version" style="position:fixed;bottom:4px;right:6px;font-size:10px;color:#94a3b8;pointer-events:auto;z-index:50;user-select:text;">v:2026-05-08-r22</div>
 </body>
 </html>
