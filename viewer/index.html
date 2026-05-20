@@ -221,7 +221,7 @@ body.splitting-v { cursor:row-resize !important; }
 .section-panel .thumb-cell { display:flex; flex-direction:column; align-items:center; min-width:0; }
 .section-panel .thumb-rot-box { position:relative; width:100%; aspect-ratio:var(--rot-ar, 1/1); max-height:90px; overflow:hidden; background:#0b1220; border-radius:3px; cursor:pointer; }
 .section-panel .thumb-rot-box img { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; transform-origin:50% 50%; }
-.section-panel .thumb-rot-box img.msi { transform:rotate(-180deg); }
+.section-panel .thumb-rot-box img.msi { transform:rotate(-180deg); image-rendering:pixelated; }
 .section-panel .thumb-rot-box.active { box-shadow:0 0 0 2px #3b82f6 inset; }
 .section-panel .thumb-cap { font-size:10px; color:#475569; margin-top:2px; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .section-empty { display:flex; flex-direction:column; gap:8px; align-items:center; justify-content:center; color:#9ca3af; flex:1 1 auto; padding:20px; text-align:center; font-size:12px; }
@@ -421,6 +421,7 @@ body.share-admin #share-preview-overlay .preview-admin-login { display:none; }
 }
 #share-preview-overlay .preview-image-cell img {
     max-width:100%; max-height:100%; object-fit:contain; background:#000;
+    image-rendering:pixelated;
 }
 #share-preview-overlay .preview-image-cell .cell-empty {
     color:#64748b; font-size:11px; padding:12px;
@@ -1563,8 +1564,8 @@ const JET_LUT = buildLut([
 ]);
 
 const GRAYSCALE_LUT = buildLut([
-    [0.000,   0,   0,   0],
-    [1.000, 255, 255, 255],
+    [0.000, 255, 255, 255],
+    [1.000,   0,   0,   0],
 ]);
 
 const COLORMAPS = {
@@ -1585,6 +1586,19 @@ function getActiveColormap() {
 }
 function setActiveColormap(name) {
     if (COLORMAPS[name]) _activeColormapName = name;
+}
+
+// Out-of-grid / near-zero pixels are painted with a hardcoded backdrop in
+// renderComposite / renderMsiThumbnail / paintMsiToColored so neither HE
+// nor the colormap's tinted floor (Plasma navy, Viridis purple, etc.)
+// leaks through. Grayscale (low=white) needs white instead of black to
+// stay continuous with its own floor; other colormaps keep the legacy
+// black fill via the fallback below.
+const COLORMAP_BACKGROUNDS = {
+    grayscale: [255, 255, 255],
+};
+function getColormapBackground() {
+    return COLORMAP_BACKGROUNDS[_activeColormapName] || [0, 0, 0];
 }
 
 function rasterRowsToPngDataUrl(rows, range) {
@@ -2313,6 +2327,7 @@ class SectionPanel {
                 const d = data.data;
                 const range = (settings.vmax - settings.vmin) || 1;
                 const lut = getActiveColormap();
+                const bg = getColormapBackground();
                 for (let i = 0; i < d.length; i += 4) {
                     const r = d[i], g = d[i+1], b = d[i+2], a = d[i+3];
                     const lum = 0.299*r + 0.587*g + 0.114*b;
@@ -2322,19 +2337,22 @@ class SectionPanel {
                     // MSI raster):
                     //   - Out-of-grid pixels (a === 0; common in sparse
                     //     scans where rasterRowsToPngDataUrl skips cells the
-                    //     scanner didn't visit) become opaque black so HE
-                    //     can't leak through the gaps.
+                    //     scanner didn't visit) become an opaque backdrop so
+                    //     HE can't leak through the gaps.
                     //   - In-raster near-zero pixels (lum < 1) also become
-                    //     opaque black so the colormap floor (Plasma navy /
-                    //     Hot black / Viridis purple) doesn't show as a
-                    //     tinted backdrop.
+                    //     the opaque backdrop so the colormap floor (Plasma
+                    //     navy / Hot black / Viridis purple) doesn't show as
+                    //     a tinted layer.
+                    //   - Backdrop color = getColormapBackground(): black for
+                    //     most colormaps, white for Grayscale (low=white) so
+                    //     the gap fill stays continuous with the LUT floor.
                     //   - Signal pixels get the active colormap.
                     // ctx.globalAlpha = settings.opacity then handles the
                     // blend with HE: 100 % covers HE completely inside the
                     // raster, lower opacity proportionally reveals HE
                     // through every in-raster pixel.
                     if (a === 0 || lum < 1) {
-                        d[i] = 0; d[i+1] = 0; d[i+2] = 0; d[i+3] = 255;
+                        d[i] = bg[0]; d[i+1] = bg[1]; d[i+2] = bg[2]; d[i+3] = 255;
                     } else {
                         const c = lut[Math.round(n * 255)];
                         d[i] = c[0]; d[i+1] = c[1]; d[i+2] = c[2]; d[i+3] = 255;
@@ -2379,6 +2397,7 @@ class SectionPanel {
                 ctx.restore();
             } else if (isMsiLayer) {
                 ctx.save();
+                ctx.imageSmoothingEnabled = false;
                 ctx.translate(0, this.dom.cdisp.height);
                 ctx.rotate(-Math.PI / 2);
                 ctx.drawImage(drawSource, 0, 0, this.dom.cdisp.height, this.dom.cdisp.width);
@@ -3618,16 +3637,18 @@ class SectionPanel {
         const c = document.createElement('canvas');
         c.width = src.naturalWidth; c.height = src.naturalHeight;
         const ctx = c.getContext('2d', { willReadFrequently: true });
+        ctx.imageSmoothingEnabled = false;
         ctx.drawImage(src, 0, 0);
         const data = ctx.getImageData(0, 0, c.width, c.height);
         const d = data.data;
         const st = this.imageSettings[key] || { vmin: 0, vmax: 255 };
         const range = (st.vmax - st.vmin) || 1;
         const lut = getActiveColormap();
+        const bg = getColormapBackground();
         for (let i = 0; i < d.length; i += 4) {
             if (d[i+3] === 0) continue;
             const lum = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
-            if (lum < 1) { d[i] = 0; d[i+1] = 0; d[i+2] = 0; continue; }
+            if (lum < 1) { d[i] = bg[0]; d[i+1] = bg[1]; d[i+2] = bg[2]; continue; }
             const n = Math.max(0, Math.min(1, (lum - st.vmin) / range));
             const cm = lut[Math.round(n * 255)];
             d[i] = cm[0]; d[i+1] = cm[1]; d[i+2] = cm[2];
@@ -5292,6 +5313,7 @@ const Wizards = {
             const c = document.createElement('canvas');
             c.width = srcImg.naturalWidth; c.height = srcImg.naturalHeight;
             const cctx = c.getContext('2d', { willReadFrequently: true });
+            cctx.imageSmoothingEnabled = false;
             cctx.drawImage(srcImg, 0, 0);
             const data = cctx.getImageData(0, 0, c.width, c.height);
             const d = data.data;
@@ -5299,10 +5321,11 @@ const Wizards = {
             const v1 = Number.isFinite(vmax) && vmax > v0 ? vmax : v0 + 1;
             const range = v1 - v0;
             const lut = getActiveColormap();
+            const bg = getColormapBackground();
             for (let i = 0; i < d.length; i += 4) {
                 if (d[i+3] === 0) continue;
                 const lum = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
-                if (lum < 1) { d[i] = 0; d[i+1] = 0; d[i+2] = 0; continue; }
+                if (lum < 1) { d[i] = bg[0]; d[i+1] = bg[1]; d[i+2] = bg[2]; continue; }
                 const n = Math.max(0, Math.min(1, (lum - v0) / range));
                 const cm = lut[Math.round(n * 255)];
                 d[i] = cm[0]; d[i+1] = cm[1]; d[i+2] = cm[2];
@@ -7943,6 +7966,7 @@ const SharePreview = {
         const out = document.createElement('canvas');
         out.width = newW; out.height = newH;
         const ctx = out.getContext('2d');
+        ctx.imageSmoothingEnabled = false;
         ctx.translate(newW / 2, newH / 2);
         ctx.rotate(rad);
         ctx.drawImage(srcCanvas, -w / 2, -h / 2);
@@ -8735,6 +8759,7 @@ const Toolbar = {
     _drawThumbInto(canvas, panel) {
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = false;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.fillStyle = '#1f2937';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
