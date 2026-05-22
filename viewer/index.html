@@ -177,8 +177,8 @@ body.splitting-h { cursor:col-resize !important; }
 body.splitting-v { cursor:row-resize !important; }
 .section-panel .viewer-host { position:relative; flex:1 1 auto; min-height:320px; background:#000; overflow:hidden; touch-action:none; }
 .section-panel .viewer-rot { position:absolute; inset:0; transform-origin:50% 50%; transform: translate(var(--vt-tx, 0px), var(--vt-ty, 0px)) rotate(calc(var(--vt-rot, 0deg) - 90deg)) scale(var(--vt-scale, 1)); will-change:transform; }
-.section-panel canvas.disp { position:absolute; }
-.section-panel canvas.roi { position:absolute; pointer-events:none; }
+.section-panel canvas.disp { position:absolute; image-rendering:pixelated; }
+.section-panel canvas.roi { position:absolute; pointer-events:none; image-rendering:pixelated; }
 .section-panel .msi-scalebar {
     position:absolute; left:12px; bottom:10px; z-index:5;
     pointer-events:none;
@@ -2263,6 +2263,11 @@ class SectionPanel {
         if (!ctx || this.dom.cdisp.width === 0) return;
         this._maybeWarnRasterDimMismatch();
         ctx.clearRect(0, 0, this.dom.cdisp.width, this.dom.cdisp.height);
+        // Default: no canvas-API bilinear smoothing. MSI pixels are discrete
+        // measurements and HE/IF round-trips through small intermediates,
+        // so opt-in (explicit `imageSmoothingEnabled = true` at the call
+        // site) is the only path that turns interpolation back on.
+        ctx.imageSmoothingEnabled = false;
 
         // Section-level flip (master-only setting). Wrap the entire layer
         // loop in a single mirror transform so MSI + HE/IF + others all
@@ -11283,6 +11288,6 @@ document.addEventListener('DOMContentLoaded', () => { App.init().catch(e => { co
      copy. Format: v:YYYY-MM-DD-rN where rN increments for each commit on
      the deploy branch. If the rN you see in the browser is older than what
      the maintainer told you, do a hard reload (Ctrl/Cmd-Shift-R). -->
-<div id="buildTag" title="Hard reload (Ctrl/Cmd+Shift+R) if older than the latest version" style="position:fixed;bottom:4px;right:6px;font-size:10px;color:#94a3b8;pointer-events:auto;z-index:50;user-select:text;">v:2026-05-22-r29</div>
+<div id="buildTag" title="Hard reload (Ctrl/Cmd+Shift+R) if older than the latest version" style="position:fixed;bottom:4px;right:6px;font-size:10px;color:#94a3b8;pointer-events:auto;z-index:50;user-select:text;">v:2026-05-22-r30</div>
 </body>
 </html>
