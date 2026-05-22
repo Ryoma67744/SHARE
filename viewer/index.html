@@ -6346,15 +6346,31 @@ async function tryAppendUserRoiColumns(srcBlob, section, msiEnt, project) {
         const dataStart0 = headerRow0 + 1;
         const roiPairs = rois.map(r => ({ name: r.name || r.colorKey || '', poly: r.polysBySection[section.id] }));
         sheet[XLSX.utils.encode_cell({ r: headerRow0, c: roiCol })] = { t: 's', v: 'ROI' };
+        // ROI polygons live in 0..W-1 raster grid coordinates (the grid
+        // rasterRowsToPngDataUrl builds). When the file's Image_X / Image_Y
+        // columns hold world coordinates instead of 0-indexed pixel columns,
+        // a direct pointInPolygon(x, y, poly) misses every pixel. Build the
+        // same grid here so the comparison happens in matching space.
+        const positions = [];
         for (let r = dataStart0; r <= range.e.r; r++) {
             const xCell = sheet[XLSX.utils.encode_cell({ r, c: xCol })];
             const yCell = sheet[XLSX.utils.encode_cell({ r, c: yCol })];
-            if (!xCell || !yCell) continue;
+            if (!xCell || !yCell) { positions.push(null); continue; }
             const x = Number(xCell.v), y = Number(yCell.v);
-            if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+            if (!Number.isFinite(x) || !Number.isFinite(y)) { positions.push(null); continue; }
+            positions.push({ x, y });
+        }
+        const { xIndex, yIndex } = buildPixelGridFromRows(positions);
+        for (let k = 0; k < positions.length; k++) {
+            const pos = positions[k];
+            const r = dataStart0 + k;
+            if (!pos) continue;
+            const px = xIndex.get(pos.x);
+            const py = yIndex.get(pos.y);
+            if (px == null || py == null) continue;
             let matched = '';
             for (const pair of roiPairs) {
-                if (pointInPolygon(x, y, pair.poly)) { matched = pair.name; break; }
+                if (pointInPolygon(px, py, pair.poly)) { matched = pair.name; break; }
             }
             if (matched) sheet[XLSX.utils.encode_cell({ r, c: roiCol })] = { t: 's', v: matched };
         }
@@ -6393,12 +6409,16 @@ async function tryAppendUserRoiColumnsToTxt(srcBlob, section, msiEnt, project) {
             poly: r.polysBySection[section.id],
         }));
 
+        // Try Analyte parsing unconditionally — many Analyte-derived dumps
+        // omit the literal "Analyte (converted from imzML)" marker on line
+        // 0, but parseAnalyteHeader's structural detector (two consecutive
+        // all-numeric rows that aren't a strict channel index) still finds
+        // them. If parsing fails we fall through to Generic TSV/CSV.
         let outLines = null;
-        const isAnalyteMarker = /Analyte\s*\(converted from imzML\)/i.test(linesAll[0] || '');
-        if (isAnalyteMarker) {
-            let parsed = null;
-            try { parsed = parseAnalyteHeader(buf); } catch (e) { parsed = null; }
-            if (parsed && parsed.nameIdx >= 0) outLines = appendRoisToAnalyteLines(linesAll, parsed, roiPairs);
+        let parsed = null;
+        try { parsed = parseAnalyteHeader(buf); } catch (e) { parsed = null; }
+        if (parsed && parsed.nameIdx >= 0) {
+            outLines = appendRoisToAnalyteLines(linesAll, parsed, roiPairs);
         }
         if (!outLines) {
             outLines = appendRoisToGenericLines(linesAll, roiPairs);
@@ -6412,6 +6432,25 @@ async function tryAppendUserRoiColumnsToTxt(srcBlob, section, msiEnt, project) {
         console.warn('[tryAppendUserRoiColumnsToTxt] skipped:', e);
         return null;
     }
+}
+
+// Analyte TXT data rows hold world coordinates (mm) at tok[1] / tok[2],
+// but ROI polygons live in rasterised pixel space (0..W-1, 0..H-1) — the
+// same grid rasterRowsToPngDataUrl builds by sorting the distinct x / y
+// values and indexing them. Re-derive that grid here so pointInPolygon
+// receives the matching pixel indices instead of raw mm.
+function buildPixelGridFromRows(rowPositions) {
+    const xSet = new Set(), ySet = new Set();
+    for (const p of rowPositions) {
+        if (!p) continue;
+        xSet.add(p.x); ySet.add(p.y);
+    }
+    const xs = [...xSet].sort((a, b) => a - b);
+    const ys = [...ySet].sort((a, b) => a - b);
+    return {
+        xIndex: new Map(xs.map((v, i) => [v, i])),
+        yIndex: new Map(ys.map((v, i) => [v, i])),
+    };
 }
 
 function appendRoisToAnalyteLines(linesAll, parsed, roiPairs) {
@@ -6429,19 +6468,36 @@ function appendRoisToAnalyteLines(linesAll, parsed, roiPairs) {
         if (out[i] == null) continue;
         out[i] = out[i] + '\t';
     }
+    // Pass 1: extract every data row's (world_x, world_y) so we can build
+    // the same pixel grid the renderer used. The row→position map keeps
+    // the dataStartLine offset implicit.
+    const positions = [];
     for (let i = dataStartLine; i < out.length; i++) {
         const line = out[i];
-        if (!line || !line.trim()) continue;
+        if (!line || !line.trim()) { positions.push(null); continue; }
         const tok = line.split('\t');
-        if (tok.length < 4) continue;
+        if (tok.length < 4) { positions.push(null); continue; }
         const x = Number(tok[1]);
         const y = Number(tok[2]);
-        if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+        if (!Number.isFinite(x) || !Number.isFinite(y)) { positions.push(null); continue; }
+        positions.push({ x, y });
+    }
+    const { xIndex, yIndex } = buildPixelGridFromRows(positions);
+    // Pass 2: convert to pixel indices and run pointInPolygon. Empty cell
+    // when the pixel falls outside every polygon (downstream filters by
+    // non-empty values).
+    for (let k = 0; k < positions.length; k++) {
+        const pos = positions[k];
+        const i = dataStartLine + k;
+        if (!pos) continue;
+        const px = xIndex.get(pos.x);
+        const py = yIndex.get(pos.y);
+        if (px == null || py == null) continue;
         let matched = '';
         for (const pair of roiPairs) {
-            if (pointInPolygon(x, y, pair.poly)) { matched = pair.name; break; }
+            if (pointInPolygon(px, py, pair.poly)) { matched = pair.name; break; }
         }
-        out[i] = line + '\t' + matched;
+        out[i] = out[i] + '\t' + matched;
     }
     return out;
 }
@@ -6467,19 +6523,33 @@ function appendRoisToGenericLines(linesAll, roiPairs) {
     const escape = sep === ',' ? csvEscape : (s) => s;
     const out = linesAll.slice();
     out[headerIdx] = rawHeader + sep + 'ROI';
+    // Same pixel-grid translation as the Analyte path. Even Generic files
+    // that name their columns "x" / "y" hold world coordinates, not the
+    // raster's 0..W-1 indices that the polygon was drawn in.
+    const positions = [];
     for (let i = headerIdx + 1; i < out.length; i++) {
         const line = out[i];
-        if (!line || !line.trim()) continue;
+        if (!line || !line.trim()) { positions.push(null); continue; }
         const cols = splitBy(line);
-        if (cols.length <= Math.max(xi, yi)) continue;
+        if (cols.length <= Math.max(xi, yi)) { positions.push(null); continue; }
         const x = Number(cols[xi]);
         const y = Number(cols[yi]);
-        if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+        if (!Number.isFinite(x) || !Number.isFinite(y)) { positions.push(null); continue; }
+        positions.push({ x, y });
+    }
+    const { xIndex, yIndex } = buildPixelGridFromRows(positions);
+    for (let k = 0; k < positions.length; k++) {
+        const pos = positions[k];
+        const i = headerIdx + 1 + k;
+        if (!pos) continue;
+        const px = xIndex.get(pos.x);
+        const py = yIndex.get(pos.y);
+        if (px == null || py == null) continue;
         let matched = '';
         for (const pair of roiPairs) {
-            if (pointInPolygon(x, y, pair.poly)) { matched = pair.name; break; }
+            if (pointInPolygon(px, py, pair.poly)) { matched = pair.name; break; }
         }
-        out[i] = line + sep + escape(matched);
+        out[i] = out[i] + sep + escape(matched);
     }
     return out;
 }
@@ -11173,6 +11243,6 @@ document.addEventListener('DOMContentLoaded', () => { App.init().catch(e => { co
      copy. Format: v:YYYY-MM-DD-rN where rN increments for each commit on
      the deploy branch. If the rN you see in the browser is older than what
      the maintainer told you, do a hard reload (Ctrl/Cmd-Shift-R). -->
-<div id="buildTag" title="Hard reload (Ctrl/Cmd+Shift+R) if older than the latest version" style="position:fixed;bottom:4px;right:6px;font-size:10px;color:#94a3b8;pointer-events:auto;z-index:50;user-select:text;">v:2026-05-22-r27</div>
+<div id="buildTag" title="Hard reload (Ctrl/Cmd+Shift+R) if older than the latest version" style="position:fixed;bottom:4px;right:6px;font-size:10px;color:#94a3b8;pointer-events:auto;z-index:50;user-select:text;">v:2026-05-22-r28</div>
 </body>
 </html>
