@@ -3693,7 +3693,14 @@ class SectionPanel {
             im.alt = formatDisplayName(key);
             im.src = this.imageDataUrls[key];
             const isMsi = /^MSI_/i.test(key);
-            if (isMsi) im.className = 'msi';
+            // The synthetic TIC lives in MSI raster space (same naturalW/H
+            // and same orientation as the underlying MSI), so its thumbnail
+            // needs the same CSS rotate(-180deg) + pixelated rendering that
+            // the .msi class supplies — otherwise it appears 90° off from
+            // both the main canvas and the neighbouring MSI thumbnails.
+            // renderMsiThumbnail is deliberately NOT called for the TIC
+            // (no LUT bake, no colormap), so the chip stays grayscale.
+            if (isMsi || key === 'HE_STAIN_TIC') im.className = 'msi';
             const applyAr = () => {
                 const iw = im.naturalWidth, ih = im.naturalHeight;
                 if (iw && ih) box.style.setProperty('--rot-ar', iw + ' / ' + ih);
